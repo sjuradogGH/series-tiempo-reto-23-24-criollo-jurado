@@ -1,0 +1,36 @@
+---
+title: "Documento técnico de los dos modelos"
+author:
+  - "Nombre completo integrante 1"
+  - "Nombre completo integrante 2"
+format:
+  pdf:
+    geometry: margin=2.5cm
+    fontsize: 11pt
+execute:
+  echo: false
+---
+
+# Resumen
+
+Pendiente: un párrafo con los dos pronósticos principales y sus intervalos del 95 %.
+
+# Datos
+
+Pendiente: fuente, periodo, frecuencia, tamaño y partición de las dos series.
+
+# Modelo del CO₂
+
+Pendiente: transformación, diferencias, ecuación con errores estándar, validación residual, comparación con referencias y tabla de los 12 pronósticos e intervalos.
+
+# Modelo de los viajeros
+
+Pendiente: mismos elementos, elección entre candidatos, mediana o media retransformada.
+
+# Comparación de los dos modelos
+
+Pendiente: comparar los Theta estimados, patrón estacional casi fijo frente a evolutivo, consecuencia de Theta=1, desempeño de métodos sencillos y recomendación sustentada con cifras.
+
+# Limitaciones y referencias
+
+Pendiente. Usar las fuentes realmente consultadas. Verificar que el documento tenga entre 4 y 6 páginas, sin código, con tablas y figuras tituladas, unidades y leyendas, y cifras idénticas al HTML.

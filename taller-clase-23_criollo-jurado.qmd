@@ -1,0 +1,154 @@
+---
+title: "Reto en clase 23 y 24 — Series de tiempo univariadas"
+author:
+  - "Nombre completo integrante 1"
+  - "Nombre completo integrante 2"
+format:
+  html:
+    embed-resources: true
+    toc: true
+execute:
+  echo: true
+  error: false
+---
+
+```{r}
+source("funciones.R")
+co2_datos <- read.csv("datos/co2-mauna-loa-mensual-2012-2025.csv")
+viajeros_datos <- read.csv("datos/turistas-reino-unido-australia-trimestral.csv")
+stopifnot(nrow(co2_datos) == 165, nrow(viajeros_datos) == 91)
+co2 <- ts(co2_datos$co2_ppm, start = c(2012, 1), frequency = 12)
+viajeros <- ts(viajeros_datos$llegadas_miles, start = c(1990, 1), frequency = 4)
+co2_entrenamiento <- window(co2, end = c(2024, 9))
+co2_validacion <- window(co2, start = c(2024, 10))
+viajeros_entrenamiento <- window(viajeros, end = c(2010, 3))
+viajeros_validacion <- window(viajeros, start = c(2010, 4))
+stopifnot(length(co2_entrenamiento) == 153, length(co2_validacion) == 12,
+          length(viajeros_entrenamiento) == 83, length(viajeros_validacion) == 8)
+```
+
+# Caso A: CO₂ de Mauna Loa
+
+## A1. Mirar la serie
+
+```{r}
+# Pendiente: Crecimiento medio anual y último año; meses máximo y mínimo; amplitud en ppm y dependencia del nivel.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+## A2. ¿Hace falta transformar?
+
+```{r}
+# Pendiente: Perfil Box-Cox, valores compatibles de lambda, variación relativa del nivel y decisión.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+## A3. ¿Cuántas diferencias?
+
+```{r}
+# Pendiente: ACF de diferencia regular en 12, 24, 36; ACF de diferencia estacional en 1–6; justificar d, D y doble diferencia.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+## Bono opcional. Prueba HEGY
+
+```{r}
+# Pendiente: t1 con seis partes; F estacionales con y sin tendencia; interpretación y relación con D=1. Eliminar esta sección si no se realiza.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+## A4. Identificar el modelo
+
+```{r}
+# Pendiente: ACF/PACF regular y estacional, orden_A, tabla BIC, segundo candidato y decisión.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+## A5. Estimar, validar y buscar atípicos
+
+```{r}
+# Pendiente: Ecuación con convención del curso y t; Ljung-Box K=24; normalidad, AO/IO/LS/TC, sobreajuste e IC95% de Theta.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+## A6. ¿Le gana el SARIMA a las referencias?
+
+```{r}
+# Pendiente: Validación de 12 meses; RMSE, MAPE, MASE para SARIMA, ingenuo estacional y Holt-Winters aditivo; interpretación y cobertura del IC95%.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+## A7. El pronóstico del tablero
+
+```{r}
+# Pendiente: Método elegido, reestimación con datos disponibles, pronósticos octubre 2025–septiembre 2026, mayo 2026 e IC95%, primer mes >430 ppm (si existe), ancho del intervalo, supuesto y apuesta. Escribir CSV con formato oficial.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+# Caso B: viajeros del Reino Unido a Australia
+
+## B1. Mirar y transformar
+
+```{r}
+# Pendiente: Oscilación al inicio y mediados de los 2000; prueba lambda=1 con seis partes; G(0.5), G(0) y decisión.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+## B2. ¿Cuántas diferencias?
+
+```{r}
+# Pendiente: ACF en 4, 8, 12; D; ADF sobre diferencia estacional del log, P y valor crítico; decisión d.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+## B3. Dos candidatos
+
+```{r}
+# Pendiente: ACF/PACF regular y estacional; tabla BIC y diferencia de BIC; justificar dos candidatos.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+## B4. Estimar, validar y buscar atípicos
+
+```{r}
+# Pendiente: Dos ecuaciones; Ljung-Box K=8,12,16 con grados de libertad; atípicos y parámetros que sobran.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+## B5. Evaluación en ocho trimestres
+
+```{r}
+# Pendiente: Cinco métodos: dos medianas SARIMA, media del primero, ingenuo estacional y Holt-Winters multiplicativo; RMSE, MAPE, MASE, exp(v/2), ganador y diferencia.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+## B6. El pronóstico para la aerolínea
+
+```{r}
+# Pendiente: Modelo final, ocho trimestres con IC95%, 2012-T4 y 2014-T3, total de 2013 frente a 2011 y mensaje para la aerolínea.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+# Declaración de uso de asistentes de inteligencia artificial
+
+Se utilizó ChatGPT para revisar los requisitos del enunciado, organizar la estructura del repositorio y preparar una plantilla inicial de Quarto, incluida la carga y partición de datos. Completar esta declaración con cualquier uso posterior.
+
+# Información de la sesión
+
+```{r}
+sessionInfo()
+```

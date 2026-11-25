@@ -1,0 +1,10 @@
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+.quarto/
+*_files/
+*_cache/
+_site/
+.DS_Store
+Thumbs.db

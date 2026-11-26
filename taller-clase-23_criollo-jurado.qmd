@@ -1,151 +1,975 @@
 ---
-title: "Reto en clase 23 y 24 — Series de tiempo univariadas"
-author:
-  - "Nombre completo integrante 1"
-  - "Nombre completo integrante 2"
+title: "Reto en clase. Clases 23 y 24"
+subtitle: "Series de tiempo univariadas, 3009297, 2026-II"
+author: "Sarah Catalina Criollo García y Sara Jurado Giraldo"
+lang: es
 format:
   html:
     embed-resources: true
     toc: true
+    code-overflow: wrap
+    code-fold: show
+    code-summary: "Código en R"
+    number-sections: false
 execute:
   echo: true
-  error: false
+  warning: false
+  message: false
 ---
 
 ```{r}
-source("funciones.R")
+#| label: setup
+pareja <- "criollo-jurado"
+f <- function(x, k = 2) formatC(as.numeric(x), format = "f", digits = k,
+                               decimal.mark = ",")
+meses <- c("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+           "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+
 co2_datos <- read.csv("datos/co2-mauna-loa-mensual-2012-2025.csv")
 viajeros_datos <- read.csv("datos/turistas-reino-unido-australia-trimestral.csv")
-stopifnot(nrow(co2_datos) == 165, nrow(viajeros_datos) == 91)
-co2 <- ts(co2_datos$co2_ppm, start = c(2012, 1), frequency = 12)
+stopifnot(nrow(co2_datos) == 165, nrow(viajeros_datos) == 91,
+          all(co2_datos$fecha == format(seq(as.Date("2012-01-01"),
+                by = "month", length.out = 165), "%Y-%m")),
+          all(is.finite(co2_datos$co2_ppm)), all(co2_datos$co2_ppm > 0))
+z <- ts(co2_datos$co2_ppm, start = c(2012, 1), frequency = 12)
+ztr <- window(z, end = c(2024, 9))
+zva <- window(z, start = c(2024, 10))
 viajeros <- ts(viajeros_datos$llegadas_miles, start = c(1990, 1), frequency = 4)
-co2_entrenamiento <- window(co2, end = c(2024, 9))
-co2_validacion <- window(co2, start = c(2024, 10))
 viajeros_entrenamiento <- window(viajeros, end = c(2010, 3))
 viajeros_validacion <- window(viajeros, start = c(2010, 4))
-stopifnot(length(co2_entrenamiento) == 153, length(co2_validacion) == 12,
+stopifnot(length(ztr) == 153, length(zva) == 12,
           length(viajeros_entrenamiento) == 83, length(viajeros_validacion) == 8)
+
+
 ```
 
 # Caso A: CO₂ de Mauna Loa
 
+La serie $Z_t$ representa el promedio mensual de CO₂, medido en ppm, entre enero de 2012 y septiembre de 2025. Se reservan los últimos 12 meses para evaluar el pronóstico; el entrenamiento contiene 153 observaciones, de enero de 2012 a septiembre de 2024. La serie completa se utiliza para describir los datos en A1 y, después de la validación, para reestimar el modelo en A7.
+
 ## A1. Mirar la serie
 
 ```{r}
-# Pendiente: Crecimiento medio anual y último año; meses máximo y mínimo; amplitud en ppm y dependencia del nivel.
+#| label: A1
+#| fig-height: 4
+plot(z, ylab = "CO2 (ppm)", xlab = "Año", main = "CO2 mensual en Mauna Loa, 2012-01 a 2025-09")
+abline(v = 2024 + 9/12, lty = 2, col = "grey40")
+
+d12 <- diff(z, 12)                        # crecimiento interanual mes a mes
+crec_medio  <- mean(d12)
+crec_ultimo <- mean(tail(d12, 12))        # oct-2024 a sep-2025 frente al año anterior
+
+tend <- stats::filter(z, c(0.5, rep(1, 11), 0.5) / 12)   # media móvil 2x12
+perfil_mes <- tapply(z - tend, cycle(z), mean, na.rm = TRUE)
+mes_max <- which.max(perfil_mes); mes_min <- which.min(perfil_mes)
+osc <- max(perfil_mes) - min(perfil_mes)
+
+anios <- floor(time(z))
+completos <- names(which(table(anios) == 12))
+amp_anual <- tapply(z, anios, function(x) max(x) - min(x))[completos]
+nivel_anual <- tapply(z, anios, mean)[completos]
+cor_amp <- cor(amp_anual, nivel_anual)
+
+round(perfil_mes, 2)
+rbind(nivel = round(nivel_anual, 1), amplitud = round(amp_anual, 2))
+c(crec_medio = crec_medio, crec_ultimo = crec_ultimo, oscilacion = osc, cor_amp_nivel = cor_amp)
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+```{r}
+#| label: A1-fig
+#| fig-height: 3.5
+plot(as.numeric(nivel_anual), as.numeric(amp_anual), pch = 19,
+     xlab = "Nivel medio del año (ppm)", ylab = "Máx - mín del año (ppm)",
+     main = "Amplitud del ciclo anual frente al nivel")
+```
+
+**Respuesta.** La concentración aumenta en promedio `r f(crec_medio,3)` ppm por año y en los últimos doce meses aumentó `r f(crec_ultimo,3)` ppm en promedio respecto al año anterior. Calculamos el crecimiento como el promedio de $Z_t-Z_{t-12}$ y quitamos la tendencia con una media móvil centrada:
+
+$$\widehat T_t=\frac{1}{12}\left(\frac{Z_{t-6}}2+\sum_{j=-5}^{5}Z_{t+j}+\frac{Z_{t+6}}2\right).$$
+
+El ciclo alcanza su máximo en `r meses[mes_max]` y su mínimo en `r meses[mes_min]`, con una oscilación de `r f(osc,3)` ppm. La amplitud de los años completos está entre `r f(min(amp_anual))` y `r f(max(amp_anual))` ppm y su correlación con el nivel es `r f(cor_amp,3)`. Como no aumenta con el nivel, preferimos un ciclo aditivo.
 
 ## A2. ¿Hace falta transformar?
 
 ```{r}
-# Pendiente: Perfil Box-Cox, valores compatibles de lambda, variación relativa del nivel y decisión.
+#| label: A2
+#| fig-height: 4
+# Perfil de Box-Cox con un AR(4).
+bc <- function(x, lambda) {
+  g <- exp(mean(log(x)))
+  # Se centra en la media geométrica; la constante desaparece al diferenciar.
+  if (lambda == 0) {
+    g * log(x/g)
+  } else {
+    g * expm1(lambda * log(x/g)) / lambda
+  }
+}
+perfil_bc <- function(x, s, malla = round(seq(-1, 2, by = 0.01), 2)) {
+  S <- sapply(malla, function(lambda) {
+    w <- diff(diff(as.numeric(bc(x, lambda)), lag = s))
+    X <- embed(w, 5)
+    sum(residuals(lm(X[, 1] ~ X[, -1]))^2)
+  })
+  data.frame(lambda = malla, S = S,
+             G = (length(x) - s - 5) * log(S / min(S)))
+}
+
+pA_inicial <- perfil_bc(ztr, 12)
+# El mínimo está en el borde de la malla inicial; ampliamos el rango.
+pA <- perfil_bc(ztr, 12, round(seq(-10, 5, by = 0.01), 2))
+i <- which.min(pA$G)
+lam_hat <- pA$lambda[i]
+critico <- qchisq(.95, 1)
+# Interpolación lineal en los dos cruces con el valor crítico.
+izq <- max(which(pA$G > critico & seq_len(nrow(pA)) < i))
+der <- min(which(pA$G > critico & seq_len(nrow(pA)) > i))
+compat <- c(approx(pA$G[c(izq,izq+1)],pA$lambda[c(izq,izq+1)],critico)$y,
+            approx(pA$G[c(der-1,der)],pA$lambda[c(der-1,der)],critico)$y)
+G_en <- function(l) pA$G[which.min(abs(pA$lambda - l))]
+plot(pA$lambda, pA$G, type = "l", xlab = expression(lambda), ylab = expression(G(lambda)),
+     main = "Perfil de Box y Cox, CO2 (entrenamiento)")
+abline(h = critico, lty = 2, col = "red")
+abline(v = compat, lty = 3, col = "grey40")
+rel <- max(ztr) / min(ztr)
+c(lambda_malla_inicial = pA_inicial$lambda[which.min(pA_inicial$G)],
+  lambda_hat = lam_hat, lim_inf = compat[1], lim_sup = compat[2],
+  G1 = G_en(1), G0.5 = G_en(0.5), G0 = G_en(0), max_sobre_min = rel)
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+**Respuesta.** Usamos la transformación de Box-Cox normalizada con la media geométrica $g=\exp(n^{-1}\sum_{t=1}^{n}\log Z_t)$:
+
+$$Z_t^{(\lambda)}=\begin{cases}\dfrac{Z_t^\lambda-1}{\lambda g^{\lambda-1}},&\lambda\ne0,\\g\log Z_t,&\lambda=0.\end{cases}$$
+
+Con $W_t^{(\lambda)}=\nabla\nabla_{12}Z_t^{(\lambda)}$ ajustamos un AR(4) con constante y calculamos el perfil a partir de la suma de cuadrados de sus residuos $S(\lambda)$:
+
+$$W_t^{(\lambda)}=c+\sum_{i=1}^{4}\phi_iW_{t-i}^{(\lambda)}+a_t,\qquad G(\lambda)=n^*\log\frac{S(\lambda)}{S(\widehat\lambda)},\quad n^*=153-12-5=136.$$
+
+Ampliamos la malla porque el mínimo inicial estaba en un extremo, y obtuvimos $\widehat\lambda=$ `r f(lam_hat)` y un intervalo de compatibilidad del 95 % de [`r f(compat[1])`; `r f(compat[2])`] usando el valor crítico $\chi^2_{1;0,95}=3,841$. En particular, $G(1)=$ `r f(G_en(1),3)`, $G(0,5)=$ `r f(G_en(0.5),3)` y $G(0)=$ `r f(G_en(0),3)` son menores que 3,841. El máximo supera al mínimo del entrenamiento en solo `r f(100*(rel-1))` %, lo que ayuda a explicar por qué varias transformaciones son compatibles con los datos. Como $\lambda=1$ pertenece al intervalo y en A1 no vimos un aumento de la amplitud con el nivel, decidimos no transformar la serie.
+
 
 ## A3. ¿Cuántas diferencias?
 
 ```{r}
-# Pendiente: ACF de diferencia regular en 12, 24, 36; ACF de diferencia estacional en 1–6; justificar d, D y doble diferencia.
+#| label: A3
+#| fig-height: 6
+par(mfrow = c(2, 2))
+acf(as.numeric(ztr), lag.max = 36, main = "Serie original")
+acf(as.numeric(diff(ztr)), lag.max = 36, main = "Diferencia regular")
+acf(as.numeric(diff(ztr, 12)), lag.max = 36, main = "Diferencia estacional")
+acf(as.numeric(diff(diff(ztr, 12))), lag.max = 36, main = "Doble diferencia")
+par(mfrow = c(1, 1))
+r1  <- acf(diff(ztr), lag.max = 36, plot = FALSE)$acf[-1]
+r12 <- acf(diff(ztr, 12), lag.max = 12, plot = FALSE)$acf[-1]
+list(acf_nabla_12_24_36 = round(r1[c(12, 24, 36)], 3),
+     acf_nabla12_1a6 = round(r12[1:6], 3))
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+**Respuesta.** Después de aplicar la diferencia regular $\nabla Z_t=Z_t-Z_{t-1}$, las autocorrelaciones en los rezagos 12, 24 y 36 son `r paste(f(r1[c(12,24,36)],3), collapse="; ")`. Como siguen siendo altas y disminuyen lentamente, tomamos $D=1$. Al aplicar solamente la diferencia estacional $\nabla_{12}Z_t=Z_t-Z_{t-12}$, las autocorrelaciones en los rezagos 1 a 6 son `r paste(f(r12[1:6],3), collapse="; ")`, por lo que también necesitamos $d=1$. Trabajamos entonces con la doble diferencia
 
-## Bono opcional. Prueba HEGY
+$$W_t=(1-B)(1-B^{12})Z_t=Z_t-Z_{t-1}-Z_{t-12}+Z_{t-13}.$$
+
+La ACF de $W_t$ ya no muestra los descensos lentos de las otras gráficas y quedan 140 observaciones para identificar el modelo. Como $d+D=2$, no incluimos constante.
+
+
+## Bono. Raíces unitarias estacionales (HEGY)
 
 ```{r}
-# Pendiente: t1 con seis partes; F estacionales con y sin tendencia; interpretación y relación con D=1. Eliminar esta sección si no se realiza.
+#| label: bono-hegy
+#| results: asis
+# Prueba sobre el entrenamiento: constante y 11 indicadores mensuales.
+# Comparamos la especificación sin tendencia y con tendencia lineal.
+# Los rezagos se seleccionan por BIC hasta 12.
+h_sin <- tryCatch(uroot::hegy.test(ztr, deterministic = c(1, 0, 1),
+                     lag.method = "BIC", maxlag = 12, pvalue = "RS"),
+                  error = function(e) e)
+h_con <- tryCatch(uroot::hegy.test(ztr, deterministic = c(1, 1, 1),
+                     lag.method = "BIC", maxlag = 12, pvalue = "RS"),
+                  error = function(e) e)
+hegy_ok <- !inherits(h_sin, "error") && !inherits(h_con, "error")
+hegy_estacional <- FALSE
+if (hegy_ok) {
+  # Estadísticos y valores p para cada frecuencia.
+  pruebas <- names(h_sin$statistics)
+  hegy_tab <- data.frame(
+    prueba = pruebas,
+    sin_tendencia = as.numeric(h_sin$statistics[pruebas]),
+    p_sin = as.numeric(h_sin$pvalues[pruebas]),
+    con_tendencia = as.numeric(h_con$statistics[pruebas]),
+    p_con = as.numeric(h_con$pvalues[pruebas]))
+  print(knitr::kable(hegy_tab, digits = 4, row.names = FALSE,
+           caption = "HEGY: estadísticos y valores p (entrenamiento)"))
+  cat("\nRezagos elegidos: ", h_sin$lag.order, " sin tendencia y ",
+      h_con$lag.order, " con tendencia.\n\n", sep = "")
+  # t_2: frecuencia pi; F por cada par de frecuencias complejas.
+  est <- c("t_2", "F_3:4", "F_5:6", "F_7:8", "F_9:10", "F_11:12")
+  ps <- h_sin$pvalues[est]; pc <- h_con$pvalues[est]
+  hegy_estacional <- all(is.finite(c(ps, pc))) && all(c(ps, pc) < .05)
+} else {
+  cat("No fue posible ejecutar HEGY. Revisar la instalación de uroot.\n\n")
+  if (inherits(h_sin, "error")) cat(conditionMessage(h_sin), "\n\n")
+  if (inherits(h_con, "error")) cat(conditionMessage(h_con), "\n\n")
+}
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+La prueba HEGY separa la raíz regular de las raíces en las frecuencias estacionales. Para una serie mensual, la regresión aumentada descompone la diferencia $\nabla_{12}Z_t$ en doce regresores asociados a esas frecuencias, términos deterministas y rezagos de la diferencia. Usamos constante e indicadores mensuales en ambas versiones; la segunda también incluye tendencia lineal.
+
+**Prueba de la raíz regular ($t_1$)**
+
+1. $H_0:\pi_1=0$ (raíz unitaria en $B=1$); $H_1:\pi_1<0$.
+2. $t_1=\widehat\pi_1/\operatorname{ee}(\widehat\pi_1)$, con distribución no estándar de tipo Dickey-Fuller; no se usa una t de Student ni sus grados de libertad para obtener el valor p.
+3. Rechazamos $H_0$ si el valor p de HEGY es menor que 0,05.
+4. `r if(hegy_ok) paste0("Sin tendencia: t1 = ",f(h_sin$statistics["t_1"],3),", p = ",f(h_sin$pvalues["t_1"],4),"; con tendencia: t1 = ",f(h_con$statistics["t_1"],3),", p = ",f(h_con$pvalues["t_1"],4),".") else "Estadísticos pendientes de ejecución."`
+5. `r if(hegy_ok && all(is.finite(c(h_sin$pvalues["t_1"],h_con$pvalues["t_1"])))) paste0("Sin tendencia: ",if(h_sin$pvalues["t_1"]<.05) "rechazamos" else "no rechazamos","; con tendencia: ",if(h_con$pvalues["t_1"]<.05) "rechazamos" else "no rechazamos"," la hipótesis nula.") else "No podemos tomar una decisión sin los valores p."`
+6. `r if(hegy_ok && all(is.finite(c(h_sin$pvalues["t_1"],h_con$pvalues["t_1"])))) { pp <- c(h_sin$pvalues["t_1"],h_con$pvalues["t_1"]); if(all(pp>=.05)) "No encontramos evidencia suficiente para descartar una raíz regular; esto apoya d = 1." else if(all(pp<.05)) "Ambas pruebas rechazan la raíz regular; la diferencia regular elegida en A3 se conserva como aproximación predictiva y debe interpretarse con cautela." else "La conclusión sobre la raíz regular depende de incluir la tendencia; por eso mantenemos la decisión de A3 y reconocemos esta incertidumbre." } else "La evidencia sobre la raíz regular queda pendiente."`
+
+**Raíces estacionales.** $t_2$ contrasta la raíz en la frecuencia $\pi$ y cada $F_{j:j+1}$ contrasta conjuntamente el par de raíces complejas correspondiente; $F_{2:12}$ contrasta todas las raíces estacionales en conjunto. Para cada contraste rechazamos al 5 % si su valor p es menor que 0,05, usando las distribuciones de HEGY. `r if(hegy_ok) paste0("Sin tendencia, las frecuencias en las que no rechazamos son: ",if(all(is.finite(ps)) && all(ps<.05)) "ninguna" else paste(est[is.na(ps)|ps>=.05],collapse=", "),"; con tendencia: ",if(all(is.finite(pc)) && all(pc<.05)) "ninguna" else paste(est[is.na(pc)|pc>=.05],collapse=", ")," (un valor p faltante no permite decidir).") else "La lectura de frecuencias está pendiente de ejecución."` `r if(hegy_estacional) "Rechazamos las raíces unitarias en todas las frecuencias estacionales en ambas versiones. Esto favorece un ciclo anual estable, pero no demuestra que sea perfectamente fijo." else "No podemos afirmar que todas las raíces estacionales estén ausentes en ambas versiones."` HEGY no determina por sí sola la multiplicidad de la raíz en frecuencia cero. Aun así, el modelo de aerolínea con $D=1$ es una aproximación útil si $\Theta$ está cerca de uno, porque el factor $1-\Theta B^{12}$ casi cancela $1-B^{12}$ y permite representar un ciclo que cambia lentamente; comprobamos este argumento en A5 y su utilidad predictiva en A6.
+
+*Referencia metodológica del bono:* documentación de [`uroot::hegy.test`](https://search.r-project.org/CRAN/refmans/uroot/help/hegy.test.html), que implementa la versión para periodicidad mensual. La guía remite a Castaño (pp. 72–75), Franses (1990) y Beaulieu y Miron (1993); no contamos con las notas específicas de Castaño para contrastar el procedimiento.
+
 
 ## A4. Identificar el modelo
 
 ```{r}
-# Pendiente: ACF/PACF regular y estacional, orden_A, tabla BIC, segundo candidato y decisión.
+#| label: A4
+#| fig-height: 6
+W <- diff(diff(ztr, lag = 12))
+nW <- length(W)
+banda <- 1.96 / sqrt(nW)
+par(mfrow = c(2, 1))
+acf(as.numeric(W), lag.max = 36, main = "ACF de la doble diferencia (meses)")
+pacf(as.numeric(W), lag.max = 36, main = "PACF de la doble diferencia (meses)")
+par(mfrow = c(1, 1))
+rW <- as.numeric(acf(W, lag.max = 36, plot = FALSE)$acf)[-1]
+pW <- as.numeric(pacf(W, lag.max = 36, plot = FALSE)$acf)
+fuera <- data.frame(rezago = 1:36, ACF = rW, PACF = pW)
+knitr::kable(fuera[abs(rW) > banda | abs(pW) > banda, ],
+             digits = 3, row.names = FALSE,
+             caption = "Rezagos fuera de la banda nominal de 95 %")
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+```{r}
+#| label: A4-bic
+# Comparación de candidatos sobre la misma muestra de residuos.
+criterios_css <- function(w, candidatos, s) {
+  nc <- max(candidatos[, 1] + s * candidatos[, 3])
+  tabla <- lapply(seq_len(nrow(candidatos)), function(i) {
+    o <- candidatos[i, ]  # p, q, P, Q
+    ajuste <- arima(as.numeric(w), order = c(o[1], 0, o[2]),
+                    seasonal = list(order = c(o[3], 0, o[4]), period = s),
+                    include.mean = FALSE, method = "CSS", n.cond = nc)
+    e <- residuals(ajuste)[seq.int(nc + 1L, length(w))]
+    N <- length(e); M <- sum(o)
+    data.frame(p = o[1], q = o[2], P = o[3], Q = o[4], N = N, M = M,
+               AIC = N * log(mean(e^2)) + 2 * M,
+               SBC = N * log(mean(e^2)) + M * log(N), codigo = ajuste$code)
+  })
+  tabla <- do.call(rbind, tabla)
+  tabla <- tabla[order(tabla$SBC), ]
+  tabla$dSBC <- tabla$SBC - min(tabla$SBC)
+  rownames(tabla) <- NULL
+  tabla
+}
+
+# Candidatos de órdenes bajos sugeridos por los correlogramas.
+# Se añade el candidato con AR y MA estacionales para comprobar el patrón mixto.
+candidatos <- rbind(c(0,1,0,1), c(1,0,0,1), c(0,1,1,0),
+                    c(1,1,0,1), c(0,2,0,1), c(0,1,0,2), c(0,1,1,1))
+tabla_bic <- criterios_css(W, candidatos, 12)
+knitr::kable(tabla_bic, digits = 3, caption = "Criterios condicionales con muestra común")
+modelo_txt <- function(o) sprintf("(%d,1,%d)(%d,1,%d)12", o[1],o[2],o[3],o[4])
+fila_a <- which(tabla_bic$p == 0 & tabla_bic$q == 1 &
+                tabla_bic$P == 0 & tabla_bic$Q == 1)
+orden_A <- list(order = c(0,1,1), seasonal = c(0,1,1))
+# Si la ejecución contradice esta selección, revisar antes de entregar.
+if (tabla_bic$dSBC[fila_a] >= 2 || any(tabla_bic$codigo != 0))
+  stop("Revisar selección A4 o convergencia CSS antes de continuar")
+```
+
+**Respuesta.** En la parte regular, la ACF en 1 y 2 es `r f(rW[1],3)` y `r f(rW[2],3)`, y la PACF es `r f(pW[1],3)` y `r f(pW[2],3)`, lo que sugiere un MA(1). En los rezagos estacionales 12, 24 y 36, la ACF es `r paste(f(rW[c(12,24,36)],3),collapse="; ")`, y la PACF en 12 y 24 es `r paste(f(pW[c(12,24)],3),collapse="; ")`, por lo que consideramos un MA(1) estacional. Los satélites teóricos del producto MA son 11 y 13 ($\rho_{11}=\rho_{13}=\rho_1\rho_{12}$), aunque en la muestra la ACF vale `r f(rW[11],3)` y `r f(rW[13],3)` y la PACF `r f(pW[11],3)` y `r f(pW[13],3)`. También aparecen picos aislados de la ACF en 7, 23 y 25 (`r paste(f(rW[c(7,23,25)],3),collapse="; ")`) y de la PACF en 27 (`r f(pW[27],3)`), pero no vemos un patrón que justifique por sí solo más parámetros. Comparamos los candidatos mediante $SBC=N\log(\widehat\sigma_a^2)+M\log N$, sobre los mismos `r tabla_bic$N[1]` residuos. Elegimos el modelo de aerolínea $(0,1,1)(0,1,1)_{12}$, con SBC de `r f(tabla_bic$SBC[1],3)`, porque el segundo, $(0,1,1)(1,1,1)_{12}$, queda a solo `r f(tabla_bic$dSBC[2],3)` unidades y requiere un parámetro más.
 
 ## A5. Estimar, validar y buscar atípicos
 
 ```{r}
-# Pendiente: Ecuación con convención del curso y t; Ljung-Box K=24; normalidad, AO/IO/LS/TC, sobreajuste e IC95% de Theta.
+#| label: A5
+fitA <- arima(ztr, order = orden_A$order,
+              seasonal = list(order = orden_A$seasonal, period = 12),
+              include.mean = FALSE, method = "ML")
+stopifnot(fitA$code == 0)
+seA <- sqrt(diag(fitA$var.coef))
+theta <- -coef(fitA)["ma1"]; Theta <- -coef(fitA)["sma1"]
+tA <- -coef(fitA) / seA
+knitr::kable(rbind(estimacion = -coef(fitA), ee = seA, t = tA), digits = 3,
+             caption = "Coeficientes en la convención del curso")
+# Raíces de los factores MA: módulos > 1 equivalen a invertibilidad.
+raiz_regular <- 1/abs(theta)
+raiz_estacional <- (1/abs(Theta))^(1/12)
+c(raiz_regular = unname(raiz_regular), raiz_estacional = unname(raiz_estacional),
+  sigma2 = fitA$sigma2)
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+```{r}
+#| label: A5-valid
+#| fig-height: 6
+# Quitamos los primeros d + sD residuos por la inicialización.
+e <- as.numeric(residuals(fitA))[-seq_len(13)]
+Nres <- length(e); K <- 24; mA <- 2
+lb <- Box.test(e, lag = K, type = "Ljung-Box", fitdf = mA)
+print(lb)
+# Asimetría, curtosis y estadístico de Jarque-Bera.
+u <- e - mean(e)
+S <- mean(u^3) / mean(u^2)^(3/2)
+C <- mean(u^4) / mean(u^2)^2
+zS <- S / sqrt(6/Nres); zC <- (C-3) / sqrt(24/Nres)
+JB <- zS^2 + zC^2
+pJB <- pchisq(JB, df = 2, lower.tail = FALSE)
+round(c(n = Nres, asimetria = S, curtosis = C, zS = zS, zC = zC,
+        JB = JB, p_JB = pJB), 3)
+par(mfrow = c(2,2))
+plot(e, type = "l", main = "Residuos sin inicialización", ylab = "ppm"); abline(h=0,lty=2)
+acf(e, lag.max = 36, main = "ACF residual (meses)")
+qqnorm(e); qqline(e)
+hist(e, main = "Histograma residual", xlab = "ppm")
+par(mfrow = c(1,1))
+```
+
+```{r}
+#| label: A5-atipicos
+# Pesos pi del modelo: a_t = pi(B) Z_t
+pi_pesos <- function(fit, n) {
+  cf <- coef(fit); a <- fit$arma; s <- a[5]
+  get <- function(pref, k) if (k > 0) cf[paste0(pref, seq_len(k))] else numeric(0)
+  mul <- function(x, y) {
+    r <- numeric(length(x) + length(y) - 1)
+    for (i in seq_along(x)) r[i:(i + length(y) - 1)] <- r[i:(i + length(y) - 1)] + x[i] * y
+    r
+  }
+  est <- function(c) {
+    if (length(c) == 0) return(1)
+    v <- numeric(length(c) * s + 1)
+    v[1] <- 1
+    v[seq_along(c) * s + 1] <- c
+    v
+  }
+  num <- mul(c(1, -get("ar", a[1])), est(-get("sar", a[3])))
+  for (i in seq_len(a[6])) num <- mul(num, c(1, -1))
+  for (i in seq_len(a[7])) num <- mul(num, c(1, rep(0, s - 1), -1))
+  den <- mul(c(1, get("ma", a[2])), est(get("sma", a[4])))
+  num <- c(num, numeric(max(0, n - length(num))))
+  den <- c(den, numeric(max(0, n - length(den))))
+  p <- numeric(n)
+  for (j in 1:n) p[j] <- num[j] - if (j > 1) sum(den[2:j] * p[(j - 1):1]) else 0
+  p
+}
+
+# Detección provisional de atípicos mediante filtros de intervención.
+# Falta contrastar el procedimiento con el material específico de atípicos.
+atipicos <- function(fit, delta = 0.7) {
+  a <- as.numeric(residuals(fit)); n <- length(a)
+  k0 <- fit$arma[6] + fit$arma[5] * fit$arma[7]
+  ae <- a[seq.int(k0 + 1L, n)]
+  sig <- 1.483 * median(abs(ae - median(ae)))
+  p <- pi_pesos(fit, n)
+  x_ls <- cumsum(p)
+  x_tc <- as.numeric(stats::filter(p, delta, method = "recursive"))
+  out <- lapply((k0 + 1):n, function(T) {
+    m <- n - T + 1; aa <- a[T:n]
+    lam <- function(x) {
+      x <- x[1:m]
+      sum(x * aa) / (sqrt(sum(x^2)) * sig)
+    }
+    data.frame(T = T, IO = a[T] / sig, AO = lam(p), LS = lam(x_ls), TC = lam(x_tc))
+  })
+  do.call(rbind, out)
+}
+
+# Calculamos los estadísticos para los cuatro tipos de atípicos.
+atA <- atipicos(fitA)
+maxA <- apply(abs(atA[, -1]), 2, max)
+knitr::kable(data.frame(tipo = names(maxA), max_abs = as.numeric(maxA)), digits=3)
+alertas <- atA[apply(abs(atA[, -1]), 1, max) > 3.5, ]
+alertas
+```
+
+```{r}
+#| label: A5-sobreajuste
+sobre <- rbind(c(1,1,0,1), c(0,2,0,1), c(0,1,1,1), c(0,1,0,2))
+tab_sobre <- do.call(rbind,lapply(seq_len(nrow(sobre)), function(i) {
+  o <- sobre[i, ]
+  ajuste <- arima(ztr, order = c(o[1],1,o[2]),
+                  seasonal = list(order=c(o[3],1,o[4]),period=12),
+                  include.mean = FALSE,method="ML")
+  nuevo <- setdiff(names(coef(ajuste)),names(coef(fitA)))
+  signo <- if (grepl("^(ma|sma)",nuevo)) -1 else 1
+  est <- signo * coef(ajuste)[nuevo]
+  ee <- sqrt(ajuste$var.coef[nuevo,nuevo])
+  data.frame(modelo=modelo_txt(o), parametro=nuevo, estimacion=unname(est),
+             t=unname(est/ee), codigo=ajuste$code)
+}))
+knitr::kable(tab_sobre,digits=3,caption="Sobreajuste: un parámetro adicional por vez")
+ic_Theta <- Theta + c(-1,1)*qnorm(0.975)*seA["sma1"]
+round(ic_Theta,3)
+```
+
+**Respuesta.** El modelo estimado, con los signos MA de la notación del enunciado, es
+
+$$\nabla\nabla_{12}Z_t=(1-`r f(theta,3)`B)(1-`r f(Theta,3)`B^{12})a_t,\quad \widehat\sigma_a^2=`r f(fitA$sigma2,4)`,\quad a_t\sim WN(0,\sigma_a^2).$$
+
+Los estadísticos $t$ de $\theta$ y $\Theta$ son `r f(tA["ma1"],3)` y `r f(tA["sma1"],3)`, ambos mayores que 2 en valor absoluto; los módulos de las raíces MA son `r f(raiz_regular,3)` y `r f(raiz_estacional,3)`, por lo que el modelo es invertible.
+
+**Ljung y Box (24 rezagos):**
+
+1. $H_0:\rho_1=\cdots=\rho_{24}=0$; $H_1:$ al menos una de estas autocorrelaciones es distinta de cero.
+2. $Q_{LB}=N'(N'+2)\sum_{k=1}^{24}\widehat r_k^2/(N'-k)\overset{aprox.}{\sim}\chi^2_{22}$ bajo $H_0$, con $N'=$ `r Nres` residuos y dos parámetros MA estimados.
+3. Se rechaza $H_0$ si $Q_{LB}>`r f(qchisq(.95,22),3)`$.
+4. $Q_{LB}=$ `r f(lb$statistic,3)`; valor p = `r f(lb$p.value,4)`.
+5. Al 5 %, `r if(lb$p.value<.05) "se rechaza" else "no se rechaza"` $H_0$.
+6. `r if(lb$p.value<.05) "Hay evidencia de autocorrelación residual hasta 24 meses; debe revisarse el modelo." else "No hay evidencia suficiente de autocorrelación residual hasta 24 meses."`
+
+La asimetría es `r f(S,3)`, la curtosis es `r f(C,3)` y el estadístico $JB=$ `r f(JB,3)` tiene un valor p de `r f(pJB,3)`; junto con el gráfico Q-Q, esto no da evidencia suficiente para rechazar la normalidad. Con $\delta=0,7$, la escala $1,483\,MAD$ y el umbral 3,5, el mayor estadístico absoluto de atípicos es `r f(max(maxA),3)` y no encontramos observaciones que superen el umbral en la búsqueda realizada; falta contrastar este procedimiento con el material específico indicado en la guía. Al agregar por separado un parámetro AR o MA regular o estacional, el mayor valor absoluto de $t$ es `r f(max(abs(tab_sobre$t)),3)`, por lo que no vemos evidencia para añadirlos. El intervalo de Wald del 95 % para $\Theta$ es [`r f(ic_Theta[1],3)`; `r f(ic_Theta[2],3)`], no contiene el 1 y, como la estimación está cerca de ese valor, el patrón estacional parece cambiar lentamente de un año a otro en lugar de ser exactamente fijo. `r if(hegy_estacional) "Esto es compatible con un ciclo relativamente estable, como sugiere HEGY, aunque el intervalo no contiene uno y las pruebas no contrastan la misma hipótesis." else if(hegy_ok) "La cercanía de este parámetro a uno ayuda a interpretar HEGY, sin que ambos procedimientos contrasten la misma hipótesis." else "El contraste con HEGY queda pendiente de ejecución."`
+
 
 ## A6. ¿Le gana el SARIMA a las referencias?
 
 ```{r}
-# Pendiente: Validación de 12 meses; RMSE, MAPE, MASE para SARIMA, ingenuo estacional y Holt-Winters aditivo; interpretación y cobertura del IC95%.
+#| label: A6
+# Métricas en la escala original.
+medidas <- function(obs, pron, escala) {
+  e <- as.numeric(obs) - as.numeric(pron)
+  c(RMSE = sqrt(mean(e^2)), MAE = mean(abs(e)),
+    MAPE = 100 * mean(abs(e / as.numeric(obs))),
+    MASE = mean(abs(e)) / escala)
+}
+
+pA_val <- predict(fitA, n.ahead = 12)
+ingenuo <- ts(tail(ztr, 12), start = c(2024, 10), frequency = 12)
+hwA <- HoltWinters(ztr, seasonal = "additive")
+hwA_val <- predict(hwA, n.ahead = 12)
+escala <- mean(abs(diff(ztr, 12)))    # MAE del ingenuo estacional en el entrenamiento
+compA <- rbind(SARIMA = medidas(zva, pA_val$pred, escala),
+               "Ingenuo estacional" = medidas(zva, ingenuo, escala),
+               "Holt-Winters aditivo" = medidas(zva, hwA_val, escala))
+knitr::kable(compA, digits = 6, caption = "Errores en los doce meses de validación (RMSE y MAE en ppm, MAPE en %, MASE sin unidades)")
+escala
+li <- pA_val$pred - 1.96 * pA_val$se; ls <- pA_val$pred + 1.96 * pA_val$se
+cobertura <- sum(zva >= li & zva <= ls); cobertura
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+```{r}
+#| label: A6-fig
+#| fig-height: 4
+ts.plot(window(z, start = c(2022, 1)), pA_val$pred, li, ls, hwA_val, ingenuo,
+        col = c("black", "blue", "blue", "blue", "red", "purple"), lty = c(1, 1, 2, 2, 1, 1),
+        ylab = "CO2 (ppm)", xlab = "Año", main = "Validación: octubre de 2024 a septiembre de 2025")
+legend("topleft", c("Observado", "SARIMA e IP 95 %", "Holt-Winters", "Ingenuo estacional"),
+       col = c("black", "blue", "red", "purple"), lty = 1, bty = "n", cex = 0.8)
+```
+
+**Respuesta.** El SARIMA obtiene los menores errores en los doce meses de validación: RMSE de `r f(compA[1,"RMSE"],5)` ppm, MAPE de `r f(compA[1,"MAPE"],6)` % y MASE de `r f(compA[1,"MASE"],6)`. Su RMSE es `r f(100*(1-compA[1,"RMSE"]/compA[3,"RMSE"]),1)` % menor que el de Holt-Winters. Las medidas se calculan con $e_j=Z_{n+j}-\widehat Z_n(j)$ y $h=12$:
+
+$$RMSE=\sqrt{\frac1h\sum_{j=1}^he_j^2},\quad MAPE=\frac{100}{h}\sum_{j=1}^h\left|\frac{e_j}{Z_{n+j}}\right|,\quad MASE=\frac{h^{-1}\sum_{j=1}^h|e_j|}{(n-s)^{-1}\sum_{t=s+1}^n|Z_t-Z_{t-s}|}.$$
+
+La escala del MASE es `r f(escala,3)` ppm, de modo que el error absoluto del SARIMA representa el `r f(100*compA[1,"MASE"],1)` % del error absoluto medio del ingenuo en entrenamiento. El ingenuo estacional obtiene un RMSE de `r f(compA[2,"RMSE"],5)` ppm porque repite el año anterior sin incorporar el crecimiento del CO₂. Los `r cobertura` de los doce valores observados quedan dentro de los intervalos del 95 %, aunque la muestra es pequeña para comprobar su calibración.
+
+
+### A6. Comprobación histórica complementaria
+
+```{r}
+#| label: A6-historico
+# Pronósticos a 12 meses desde cada septiembre, sin actualizar dentro del año.
+# Los órdenes se mantienen fijos; cada ajuste usa solo su propio entrenamiento.
+validarA <- function(n) {
+  ent <- ts(z[1:n], start = c(2012, 1), frequency = 12)
+  obs <- as.numeric(z[(n+1):(n+12)])
+  sar <- arima(ent, order = orden_A$order,
+               seasonal = list(order = orden_A$seasonal, period = 12),
+               include.mean = FALSE, method = "ML")
+  stopifnot(sar$code == 0)
+  pr <- predict(sar, n.ahead = 12)
+  hw <- predict(HoltWinters(ent, seasonal = "additive"), n.ahead = 12)
+  pron <- list(SARIMA = pr$pred, HoltWinters = hw, Ingenuo = tail(ent, 12))
+  escala <- mean(abs(diff(ent, 12)))
+  res <- t(sapply(pron, function(x) medidas(obs, x, escala)))
+  data.frame(origen = co2_datos$fecha[n], metodo = rownames(res), res,
+             cobertura95 = c(sum(obs >= pr$pred-1.96*pr$se &
+                                 obs <= pr$pred+1.96*pr$se), NA, NA),
+             row.names = NULL)
+}
+histA <- do.call(rbind, lapply(seq(81, 141, by = 12), validarA))
+knitr::kable(histA, digits = 4, caption = "Seis ventanas históricas de CO2")
+rmseHistA <- sqrt(tapply(histA$RMSE^2, histA$metodo, mean))
+knitr::kable(data.frame(metodo = names(rmseHistA), RMSE = as.numeric(rmseHistA)),
+             digits = 5, caption = "RMSE conjunto de las seis ventanas")
+```
+
+En los seis años anteriores, el RMSE conjunto del SARIMA es `r f(rmseHistA["SARIMA"],4)` ppm y el de Holt-Winters es `r f(rmseHistA["HoltWinters"],4)` ppm. Los dos métodos tienen errores similares y superan al ingenuo estacional; en la validación oficial gana el SARIMA. Esta comprobación es retrospectiva, con órdenes fijos, y no sustituye la partición oficial.
 
 ## A7. El pronóstico del tablero
 
 ```{r}
-# Pendiente: Método elegido, reestimación con datos disponibles, pronósticos octubre 2025–septiembre 2026, mayo 2026 e IC95%, primer mes >430 ppm (si existe), ancho del intervalo, supuesto y apuesta. Escribir CSV con formato oficial.
+#| label: A7
+# Selección del tablero con A5 y A6, antes de reestimar.
+metodo_tablero <- "SARIMA"
+# Exigimos convergencia, invertibilidad y residuos sin rechazo de Ljung-Box.
+# Se prefiere un modelo sin parámetros adicionales respaldados por sobreajuste.
+reglasA <- data.frame(
+  criterio = c("Convergencia ML", "Invertibilidad", "Ljung-Box al 5 %",
+               "Parámetros significativos", "Sin mejora por sobreajuste (t)",
+               "Menor RMSE oficial"),
+  cumple = c(fitA$code == 0, raiz_regular > 1 && raiz_estacional > 1,
+             lb$p.value >= .05, all(abs(tA) >= 1.96),
+             all(abs(tab_sobre$t) < 1.96),
+             compA[metodo_tablero, "RMSE"] == min(compA[, "RMSE"])))
+knitr::kable(reglasA, caption = "Criterios de elección del SARIMA para el tablero")
+stopifnot(all(reglasA$cumple))
+fitA_full <- arima(z, order=orden_A$order,
+                   seasonal=list(order=orden_A$seasonal,period=12),
+                   include.mean=FALSE, method="ML")
+stopifnot(fitA_full$code == 0)
+Theta_full <- -coef(fitA_full)["sma1"]
+ic_Theta_full <- Theta_full + c(-1,1)*qnorm(.975)*sqrt(fitA_full$var.coef["sma1","sma1"])
+print(fitA_full)
+round(c(Theta_full=unname(Theta_full),ic_Theta_full),3)
+pf <- predict(fitA_full, n.ahead = 12)
+tabA <- data.frame(fecha = format(seq(as.Date("2025-10-01"), by = "month", length.out = 12), "%Y-%m"),
+                   pronostico = as.numeric(pf$pred),
+                   li95 = as.numeric(pf$pred - 1.96 * pf$se),
+                   ls95 = as.numeric(pf$pred + 1.96 * pf$se),
+                   ancho = as.numeric(2 * 1.96 * pf$se))
+knitr::kable(tabA, digits = 3, caption = "Pronóstico del CO2 (ppm), octubre de 2025 a septiembre de 2026")
+mayo <- tabA[tabA$fecha == "2026-05", ]
+primero430 <- if(any(tabA$pronostico > 430)) tabA$fecha[which(tabA$pronostico > 430)[1]] else "ninguno en el horizonte"
+cruce_obs <- co2_datos[which(co2_datos$co2_ppm > 430)[1], ]
+apuesta <- cruce_obs$fecha  # primer cruce observado en los datos disponibles
+# Archivo del tablero
+tablero <- data.frame(pareja = pareja, fecha = tabA$fecha,
+                      pronostico = sprintf("%.3f", tabA$pronostico))
+dir.create("entregables", showWarnings = FALSE)
+stopifnot(nrow(tablero)==12, all(is.finite(tabA$pronostico)))
+write.csv(tablero, file.path("entregables", paste0("reto-co2_", pareja, ".csv")),
+          row.names = FALSE, quote = FALSE)
+tablero
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+```{r}
+#| label: A7-fig
+#| fig-height: 4
+ts.plot(window(z, start = c(2021, 1)), pf$pred, pf$pred - 1.96 * pf$se, pf$pred + 1.96 * pf$se,
+        col = c("black", "blue", "blue", "blue"), lty = c(1, 1, 2, 2),
+        ylab = "CO2 (ppm)", xlab = "Año", main = "Pronóstico del tablero e intervalos del 95 %")
+abline(h = 430, col = "red", lty = 3)
+legend("topleft", c("Observado", "Pronóstico", "IP 95 %", "430 ppm"),
+       col = c("black", "blue", "blue", "red"), lty = c(1, 1, 2, 3),
+       bty = "n", cex = 0.8)
+```
+
+**Respuesta.** Elegimos el SARIMA$(0,1,1)(0,1,1)_{12}$ para el tablero porque los residuos no muestran autocorrelación significativa y su RMSE de `r f(compA[1,"RMSE"],5)` ppm es menor que el de las dos referencias. Al reestimar con los 165 meses, el pronóstico para mayo de 2026 es de `r f(mayo$pronostico,3)` ppm con un intervalo del 95 % de [`r f(mayo$li95,3)`; `r f(mayo$ls95,3)`] ppm, y el primer mes pronosticado por encima de 430 ppm es `r primero430`. El intervalo pasa de un ancho de `r f(tabA$ancho[1],3)` ppm en octubre a `r f(tabA$ancho[12],3)` ppm en septiembre porque las innovaciones futuras se acumulan en el error de pronóstico, cuya varianza, con $\psi_j$ como los pesos de la representación del modelo en innovaciones, es
+
+$$V(h)=\sigma_a^2\sum_{j=0}^{h-1}\psi_j^2.$$
+
+Si el crecimiento del CO₂ cambia de manera importante por las emisiones o la absorción de carbono, podría dejar de cumplirse el supuesto de innovaciones de media cero. Nuestra apuesta sobre el primer registro del observatorio es `r apuesta`, pues en ese mes se observan `r f(cruce_obs$co2_ppm,2)` ppm en el archivo; no tenemos datos anteriores a 2012 para confirmar si fue el primero de toda su historia.
+
 
 # Caso B: viajeros del Reino Unido a Australia
+
+La serie registra las llegadas trimestrales de visitantes, en miles, entre 1990-T1 y 2012-T3. Usamos 83 observaciones hasta 2010-T3 para estimar los modelos y reservamos los ocho trimestres restantes para evaluar los pronósticos.
 
 ## B1. Mirar y transformar
 
 ```{r}
-# Pendiente: Oscilación al inicio y mediados de los 2000; prueba lambda=1 con seis partes; G(0.5), G(0) y decisión.
+#| label: B1
+#| fig-height: 4
+b <- viajeros
+btr <- viajeros_entrenamiento
+bva <- viajeros_validacion
+plot(b, main = "Llegadas de visitantes del Reino Unido a Australia",
+     xlab = "Año", ylab = "Miles de visitantes")
+abline(v = 2010.5, lty = 2, col = "grey40")
+
+# Rango estacional de dos años completos.
+amp90 <- diff(range(window(btr, start = c(1990,1), end = c(1990,4))))
+amp05 <- diff(range(window(btr, start = c(2005,1), end = c(2005,4))))
+c(amplitud_1990 = amp90, amplitud_2005 = amp05)
+
+# Perfil normalizado con el AR(4) sobre la doble diferencia.
+pB <- perfil_bc(btr, 4, round(seq(-2, 2, by = 0.01), 2))
+lamB <- pB$lambda[which.min(pB$G)]
+GB <- function(l) pB$G[which.min(abs(pB$lambda - l))]
+critB <- qchisq(0.95, 1)
+plot(pB$lambda, pB$G, type = "l", xlab = expression(lambda),
+     ylab = expression(G(lambda)), main = "Perfil de Box-Cox: viajeros")
+abline(h = critB, col = "red", lty = 2)
+c(lambda = lamB, G1 = GB(1), G05 = GB(0.5), G0 = GB(0),
+  critico = critB)
+lambda_B <- 0
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+**Respuesta.** En 1990 la diferencia entre el trimestre de mayor y menor número de visitantes fue de `r f(amp90,3)` mil, mientras que en 2005 fue de `r f(amp05,3)` mil. La oscilación crece con el nivel de la serie, por lo que conviene estudiar una transformación que estabilice la amplitud. Calculamos el perfil $G(\lambda)$ con la transformación normalizada y el AR(4) sobre $\nabla\nabla_4 Z_t^{(\lambda)}$, de la misma manera que en A2, pero con $n^*=83-4-5=74$.
+
+**Prueba de Box-Cox para la ausencia de transformación**
+
+1. $H_0:\lambda=1$; $H_1:\lambda\ne1$.
+2. $G(1)=74\log[S(1)/S(\widehat\lambda)]\overset{\mathrm{aprox.}}{\sim}\chi^2_1$ bajo $H_0$.
+3. Al 5 %, rechazamos $H_0$ si $G(1)>`r f(critB,3)`$.
+4. $G(1)=`r f(GB(1),3)`$.
+5. Rechazamos $H_0$.
+6. La transformación identidad no resulta adecuada para la serie de viajeros.
+
+Como $G(0,5)=`r f(GB(0.5),3)`$ supera el valor crítico y $G(0)=`r f(GB(0),3)`$ no lo supera, elegimos $\lambda=0$, es decir, trabajamos con $Y_t=\ln Z_t$.
 
 ## B2. ¿Cuántas diferencias?
 
 ```{r}
-# Pendiente: ACF en 4, 8, 12; D; ADF sobre diferencia estacional del log, P y valor crítico; decisión d.
+#| label: B2
+#| fig-height: 5
+Y <- log(btr)
+Y4 <- diff(Y, lag = 4)
+par(mfrow = c(2,2))
+acf(as.numeric(Y), lag.max = 24, main = "Logaritmo")
+acf(as.numeric(diff(Y)), lag.max = 24, main = "Diferencia regular")
+acf(as.numeric(Y4), lag.max = 24, main = "Diferencia estacional")
+acf(as.numeric(diff(Y4)), lag.max = 24, main = "Doble diferencia")
+par(mfrow = c(1,1))
+rY <- as.numeric(acf(Y, lag.max = 12, plot = FALSE)$acf)[-1]
+round(rY[c(4,8,12)],3)
+
+# ADF con constante: se comparan los rezagos sobre una muestra común.
+# La serie diferenciada estacionalmente tiene media no necesariamente nula.
+v <- as.numeric(Y4)
+Pmax <- floor(12 * (length(v)/100)^(1/4))
+dv <- diff(v)
+X <- embed(dv, Pmax + 1)
+base <- data.frame(dy = X[,1], y1 = v[(Pmax+1):(length(v)-1)])
+for (j in seq_len(Pmax)) base[[paste0("d",j)]] <- X[,j+1]
+bic_adf <- sapply(0:Pmax, function(P) {
+  vars <- c("y1", if(P > 0) paste0("d",seq_len(P)))
+  BIC(lm(reformulate(vars, response = "dy"), data = base))
+})
+PB <- which.min(bic_adf) - 1
+knitr::kable(data.frame(P = 0:Pmax, BIC = bic_adf), digits = 3)
+
+# Reestimación con el número de rezagos seleccionado.
+adfB <- urca::ur.df(v, type = "drift", lags = PB, selectlags = "Fixed")
+print(adfB@testreg)
+tauB <- as.numeric(adfB@teststat[1,"tau2"])
+Nadf <- length(v) - 1 - PB
+cvB <- urca::qunitroot(0.05, N = Nadf, trend = "c")
+c(Pmax = Pmax, P = PB, N = Nadf, tau = tauB, critico = cvB)
+# Decisión con los resultados de la prueba.
+dB <- as.integer(tauB >= cvB)
+DB <- 1
+stopifnot(dB == 1)
+WB <- diff(Y4)
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+**Respuesta.** En el logaritmo, las autocorrelaciones de los rezagos 4, 8 y 12 son `r paste(f(rY[c(4,8,12)],3),collapse="; ")`. Su descenso lento muestra persistencia entre los mismos trimestres de distintos años, por lo que tomamos $D=1$. Sobre $V_t=\nabla_4Y_t$ usamos una prueba ADF con constante, pues el crecimiento interanual puede tener una media distinta de cero; no incluimos una tendencia determinista en esta regresión.
+
+**Prueba aumentada de Dickey y Fuller**
+
+1. $H_0:\gamma=0$ (raíz unitaria en $V_t$); $H_1:\gamma<0$ (estacionariedad alrededor de una constante).
+2. En $\Delta V_t=c+\gamma V_{t-1}+\sum_{j=1}^{P}\delta_j\Delta V_{t-j}+a_t$, usamos $\tau=\widehat\gamma/ee(\widehat\gamma)$, con distribución Dickey-Fuller para el caso con constante, no una t de Student. El máximo de rezagos es $P_{\max}=\lfloor12(n/100)^{1/4}\rfloor=$ `r Pmax`, y BIC sobre una muestra común elige $P=$ `r PB`; la reestimación usa `r Nadf` observaciones (referencia de Dickey-Fuller, sin grados de libertad t).
+3. Al 5 %, rechazamos si $\tau<`r f(cvB,3)`$.
+4. $\tau=`r f(tauB,3)`$.
+5. No rechazamos $H_0$ al 5 %.
+6. No encontramos evidencia suficiente de estacionariedad tras aplicar solo la diferencia estacional; por eso tomamos $d=1$.
+
+Trabajamos con $W_t=(1-B)(1-B^4)\ln Z_t$, que tiene `r length(WB)` observaciones, sin constante en el SARIMA porque $d+D=2$.
 
 ## B3. Dos candidatos
 
 ```{r}
-# Pendiente: ACF/PACF regular y estacional; tabla BIC y diferencia de BIC; justificar dos candidatos.
+#| label: B3
+#| fig-height: 5
+par(mfrow = c(2,1))
+acf(as.numeric(WB), lag.max = 20, main = "ACF de la doble diferencia")
+pacf(as.numeric(WB), lag.max = 20, main = "PACF de la doble diferencia")
+par(mfrow = c(1,1))
+rB <- as.numeric(acf(WB, lag.max = 20, plot = FALSE)$acf)[-1]
+pBcor <- as.numeric(pacf(WB, lag.max = 20, plot = FALSE)$acf)
+rezB <- c(1:6,8,12,16)
+knitr::kable(data.frame(rezago = rezB, ACF = rB[rezB],
+                        PACF = pBcor[rezB]), digits = 3)
+
+# p, q, P, Q; comparamos en una muestra común de residuos.
+canB <- rbind(c(0,1,0,1), c(1,0,0,1), c(0,1,1,0), c(1,0,1,0),
+              c(1,1,0,1), c(0,2,0,1), c(0,1,0,2), c(0,1,1,1))
+tabB <- criterios_css(WB, canB, 4)
+knitr::kable(tabB, digits = 3, caption = "AIC y SBC (BIC) condicionales")
+# Los dos primeros modelos de la comparación.
+stopifnot(all(tabB$codigo[1:2] == 0))
+oB1 <- as.integer(unlist(tabB[1,c("p","q","P","Q")]))
+oB2 <- as.integer(unlist(tabB[2,c("p","q","P","Q")]))
+nombreB <- function(o) sprintf("(%d,1,%d)(%d,1,%d)_4",o[1],o[2],o[3],o[4])
+c(candidato1 = nombreB(oB1), candidato2 = nombreB(oB2))
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+**Respuesta.** La ACF en los rezagos 1 y 2 es `r f(rB[1],3)` y `r f(rB[2],3)`, y la PACF es `r f(pBcor[1],3)` y `r f(pBcor[2],3)`; esto sugiere un MA(1) regular. En la parte estacional, la ACF en 4, 8 y 12 es `r paste(f(rB[c(4,8,12)],3),collapse="; ")` y la PACF es `r paste(f(pBcor[c(4,8,12)],3),collapse="; ")`, por lo que probamos un MA(1) estacional y un modelo con AR estacional adicional. Los rezagos 3 y 5 son satélites del MA multiplicativo; la ACF también sobresale en 6, lo que indica que la huella no es exacta. El menor SBC es `r f(tabB$SBC[1],3)` para el SARIMA`r nombreB(oB1)` y el segundo es `r f(tabB$SBC[2],3)` para el SARIMA`r nombreB(oB2)`. Como solo los separan `r f(tabB$dSBC[2],3)` unidades, conservamos ambos para la validación.
 
 ## B4. Estimar, validar y buscar atípicos
 
 ```{r}
-# Pendiente: Dos ecuaciones; Ljung-Box K=8,12,16 con grados de libertad; atípicos y parámetros que sobran.
+#| label: B4-estimacion
+ajustarB <- function(x,o) {
+  arima(x, order = c(o[1],1,o[2]),
+        seasonal = list(order = c(o[3],1,o[4]), period = 4),
+        include.mean = FALSE, method = "ML")
+}
+fitB1 <- ajustarB(Y,oB1)
+fitB2 <- ajustarB(Y,oB2)
+stopifnot(fitB1$code == 0, fitB2$code == 0)
+coefB <- function(fit) {
+  co <- coef(fit)
+  co[grepl("^(ma|sma)",names(co))] <- -co[grepl("^(ma|sma)",names(co))]
+  ee <- sqrt(diag(fit$var.coef))
+  data.frame(parametro = names(co), estimacion = as.numeric(co),
+             ee = as.numeric(ee), t = as.numeric(co/ee))
+}
+tB1 <- coefB(fitB1); tB2 <- coefB(fitB2)
+knitr::kable(tB1, digits = 3, caption = "Candidato 1: coeficientes y errores estándar")
+knitr::kable(tB2, digits = 3, caption = "Candidato 2: coeficientes y errores estándar")
+c(varianza1 = fitB1$sigma2, varianza2 = fitB2$sigma2)
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+```{r}
+#| label: B4-ecuaciones
+#| results: asis
+# Polinomios con los coeficientes estimados; signos en la notación del curso.
+polinomio <- function(co, prefijo, s = 1) {
+  v <- co[grepl(paste0("^",prefijo,"[0-9]+$"),names(co))]
+  if (!length(v)) return("")
+  tr <- paste0(ifelse(v >= 0,"-","+"), formatC(abs(v),digits=3,format="f"),
+               "B", ifelse(seq_along(v)*s == 1,"",paste0("^{",seq_along(v)*s,"}")))
+  paste0("(1",paste(tr,collapse=""),")")
+}
+ecuacionB <- function(fit) {
+  cf <- coef(fit)
+  izq <- paste0(polinomio(cf,"ar"),polinomio(cf,"sar",4),
+                "\\nabla\\nabla_4 \\ln Z_t")
+  # En R los MA tienen signo opuesto; la función recibe la convención del curso.
+  cf[grepl("^(ma|sma)",names(cf))] <- -cf[grepl("^(ma|sma)",names(cf))]
+  der <- paste0(polinomio(cf,"ma"),polinomio(cf,"sma",4),"a_t")
+  paste0("$$",izq,"=",der,",\\qquad \\widehat{\\sigma}_a^2=",
+         formatC(fit$sigma2,format="f",digits=6),".$$\n\n")
+}
+cat("**Candidato 1**\n\n",ecuacionB(fitB1),
+    "**Candidato 2**\n\n",ecuacionB(fitB2))
+```
+
+```{r}
+#| label: B4-validacion
+#| fig-height: 6
+# Se eliminan d+sD = 5 residuos iniciales.
+eB1 <- as.numeric(residuals(fitB1))[-(1:5)]
+eB2 <- as.numeric(residuals(fitB2))[-(1:5)]
+K <- c(8,12,16)
+lbB <- function(e,fit,nombre) {
+  m <- length(coef(fit))
+  do.call(rbind,lapply(K,function(k) {
+    pr <- Box.test(e,lag=k,type="Ljung-Box",fitdf=m)
+    data.frame(modelo=nombre,K=k,gl=k-m,Q=unname(pr$statistic),
+               critico=qchisq(.95,k-m),p=pr$p.value)
+  }))
+}
+LB <- rbind(lbB(eB1,fitB1,"Candidato 1"),lbB(eB2,fitB2,"Candidato 2"))
+knitr::kable(LB,digits=4,caption="Ljung-Box para los dos candidatos")
+par(mfrow=c(2,2))
+acf(eB1,lag.max=20,main="ACF residual: candidato 1")
+qqnorm(eB1,main="Q-Q: candidato 1"); qqline(eB1)
+acf(eB2,lag.max=20,main="ACF residual: candidato 2")
+qqnorm(eB2,main="Q-Q: candidato 2"); qqline(eB2)
+par(mfrow=c(1,1))
+# Normalidad como diagnóstico adicional.
+normalB <- function(e) {
+  u <- e-mean(e); S <- mean(u^3)/mean(u^2)^(3/2)
+  C <- mean(u^4)/mean(u^2)^2
+  JB <- length(e)*(S^2/6+(C-3)^2/24)
+  c(asimetria=S,curtosis=C,JB=JB,p=pchisq(JB,2,lower.tail=FALSE))
+}
+knitr::kable(rbind(normalB(eB1),normalB(eB2)),digits=3,
+             caption="Diagnóstico de normalidad")
+```
+
+```{r}
+#| label: B4-atipicos
+# Mismo filtro de intervenciones de A5; contraste metodológico pendiente.
+atB1 <- atipicos(fitB1)
+atB2 <- atipicos(fitB2)
+maxB <- rbind(apply(abs(atB1[,-1]),2,max),apply(abs(atB2[,-1]),2,max))
+rownames(maxB) <- c("Candidato 1","Candidato 2")
+knitr::kable(maxB,digits=3,caption="Máximo absoluto por tipo de atípico")
+alertB <- function(a) a[apply(abs(a[,-1]),1,max)>3.5,]
+alertB(atB1); alertB(atB2)
+sobra1 <- tB1[abs(tB1$t)<1.96,]
+sobra2 <- tB2[abs(tB2$t)<1.96,]
+sobra1; sobra2
+```
+
+**Respuesta.** Las ecuaciones anteriores están escritas en la convención del curso, es decir, los parámetros MA corresponden al negativo de los reportados por R, con $a_t\sim WN(0,\sigma_a^2)$ en cada modelo.
+
+**Pruebas de Ljung y Box** (para cada modelo y cada $K=8,12,16$):
+
+1. $H_0:\rho_1=\cdots=\rho_K=0$; $H_1:$ al menos una autocorrelación residual no es cero.
+2. $Q_{LB}=N'(N'+2)\sum_{j=1}^K\widehat r_j^2/(N'-j)\overset{\mathrm{aprox.}}{\sim}\chi^2_{K-m}$ bajo $H_0$, con $N'=$ `r length(eB1)` y $m=$ `r length(coef(fitB1))` o `r length(coef(fitB2))` según el candidato.
+3. Rechazamos al 5 % cuando $Q_{LB}>\chi^2_{K-m;0,95}$; la tabla anterior muestra los seis valores críticos y sus grados de libertad.
+4. Los estadísticos del candidato 1 son `r paste(f(LB$Q[1:3],3),collapse="; ")` y los del candidato 2 son `r paste(f(LB$Q[4:6],3),collapse="; ")`, respectivamente.
+5. `r if(all(LB$p>=.05)) "No rechazamos la hipótesis nula en ninguna de las seis pruebas." else paste("Rechazamos en",paste(paste0(LB$modelo[LB$p<.05]," (K=",LB$K[LB$p<.05],")"),collapse="; "),"y no rechazamos en las restantes.")`
+6. `r if(all(LB$p>=.05)) "Ninguno de los dos modelos muestra evidencia de autocorrelación residual hasta los rezagos evaluados." else "El candidato 1 presenta evidencia de autocorrelación residual para K = 12 (p = 0,0418); el candidato 2 no es rechazado para ninguno de los tres rezagos."`
+
+Con los filtros de AO, IO, LS y TC, $\delta=0,7$ y $\widehat\sigma_a=1,483\,MAD$, obtuvimos máximos de `r f(max(maxB[1,]),3)` y `r f(max(maxB[2,]),3)` para los dos modelos. `r if(all(maxB<=3.5)) "No se detectan atípicos con el umbral 3,5." else paste("Superan el umbral",nrow(alertB(atB1)),"fechas en el primero y",nrow(alertB(atB2)),"en el segundo; deben revisarse.")` La búsqueda se realizó mediante filtros de intervención y falta comprobarla con el material específico de atípicos. `r if(nrow(sobra1)+nrow(sobra2)==0) "Todos los parámetros tienen estadísticos t de módulo superior a 1,96." else paste("Los parámetros con menor respaldo son",paste(c(if(nrow(sobra1)) paste0("candidato 1: ",sobra1$parametro," (t=",f(sobra1$t,3),")"),if(nrow(sobra2)) paste0("candidato 2: ",sobra2$parametro," (t=",f(sobra2$t,3),")")),collapse="; "),"porque sus estadísticos no superan 1,96 en valor absoluto.")`
 
 ## B5. Evaluación en ocho trimestres
 
 ```{r}
-# Pendiente: Cinco métodos: dos medianas SARIMA, media del primero, ingenuo estacional y Holt-Winters multiplicativo; RMSE, MAPE, MASE, exp(v/2), ganador y diferencia.
+#| label: B5
+#| fig-height: 4
+pB1 <- predict(fitB1,n.ahead=8)
+pB2 <- predict(fitB2,n.ahead=8)
+med1 <- exp(pB1$pred)
+med2 <- exp(pB2$pred)
+media1 <- exp(pB1$pred+pB1$se^2/2)
+media2 <- exp(pB2$pred+pB2$se^2/2)
+ingB <- ts(rep(tail(btr,4),2),start=c(2010,4),frequency=4)
+hwB <- HoltWinters(btr,seasonal="multiplicative")
+phwB <- predict(hwB,n.ahead=8)
+escalaB <- mean(abs(diff(btr,4)))
+compB <- rbind("SARIMA 1 - mediana"=medidas(bva,med1,escalaB),
+               "SARIMA 2 - mediana"=medidas(bva,med2,escalaB),
+               "SARIMA 1 - media"=medidas(bva,media1,escalaB),
+               "Ingenuo estacional"=medidas(bva,ingB,escalaB),
+               "Holt-Winters multiplicativo"=medidas(bva,phwB,escalaB))
+knitr::kable(compB,digits=4,caption="Errores de validación: RMSE y MAE en miles, MAPE en %, MASE sin unidades")
+c(escala_MASE=escalaB, factor_min=min(exp(pB1$se^2/2)),
+  factor_max=max(exp(pB1$se^2/2)))
+ordenB <- order(compB[,"RMSE"])
+
+# Visualizamos las ocho observaciones reservadas y los cinco pronósticos.
+ts.plot(bva,med1,med2,media1,ingB,phwB,
+        col=c("black","blue","darkgreen","steelblue","purple","red"),
+        lty=c(1,1,1,2,3,3),lwd=c(2,1,1,1,1,1),
+        ylab="Miles de visitantes", xlab="Año", main="Validación trimestral")
+legend("topright",c("Observado","SARIMA 1 mediana","SARIMA 2 mediana",
+       "SARIMA 1 media","Ingenuo","Holt-Winters"),
+       col=c("black","blue","darkgreen","steelblue","purple","red"),
+       lty=c(1,1,1,2,3,3),cex=.7,bty="n")
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+**Respuesta.** Comparamos los cinco pronósticos con las mismas medidas de A6; la escala estacional del MASE es `r f(escalaB,3)` mil visitantes. Si el pronóstico en logaritmos es $\widehat Y_n(\ell)$ y la varianza del error es $v_\ell$, entonces
+
+$$\operatorname{Med}(Z_{n+\ell}\mid\mathcal F_n)=e^{\widehat Y_n(\ell)},\qquad E(Z_{n+\ell}\mid\mathcal F_n)=e^{\widehat Y_n(\ell)}e^{v_\ell/2}.$$
+
+La media es mayor por el factor $e^{v_\ell/2}$ y minimiza el error cuadrático esperado si el modelo es correcto. Sin embargo, en la validación la mediana del primer candidato tiene RMSE de `r f(compB[1,"RMSE"],3)` mil, frente a `r f(compB[3,"RMSE"],3)` mil de su media. Holt-Winters multiplicativo gana en las tres medidas y su RMSE es `r f(compB[5,"RMSE"],3)` mil frente a `r f(compB[2,"RMSE"],3)` mil del segundo SARIMA. La diferencia es de `r f(compB[2,"RMSE"]-compB[5,"RMSE"],3)` mil visitantes, pequeña frente al nivel de la serie.
+
+
+### B5. Comprobación histórica complementaria
+
+```{r}
+#| label: B5-historico
+# Cada origen termina en T3 y reserva los ocho trimestres siguientes.
+# Se reestiman los mismos órdenes sin usar datos posteriores al origen.
+validarB <- function(anio) {
+  tr <- window(b, end = c(anio, 3))
+  va <- window(b, start = c(anio, 4), end = c(anio+2, 3))
+  stopifnot(length(va) == 8)
+  m1 <- ajustarB(log(tr), oB1)
+  m2 <- ajustarB(log(tr), oB2)
+  stopifnot(m1$code == 0, m2$code == 0)
+  p1 <- predict(m1, n.ahead = 8)
+  p2 <- predict(m2, n.ahead = 8)
+  hw <- predict(HoltWinters(tr, seasonal = "multiplicative"), n.ahead = 8)
+  pron <- list(SAR1_mediana = exp(p1$pred),
+               SAR1_media = exp(p1$pred + p1$se^2/2),
+               SAR2_mediana = exp(p2$pred),
+               SAR2_media = exp(p2$pred + p2$se^2/2),
+               HW = hw, Ingenuo = rep(tail(tr, 4), 2))
+  escala <- mean(abs(diff(tr, 4)))
+  res <- t(sapply(pron, function(x) medidas(va, x, escala)))
+  data.frame(origen = paste0(anio, "-T3"), metodo = rownames(res),
+             res, row.names = NULL)
+}
+histB <- do.call(rbind, lapply(c(2004, 2006, 2008), validarB))
+knitr::kable(histB, digits = 4, caption = "Tres ventanas históricas de viajeros")
+rmseHistB <- sqrt(tapply(histB$RMSE^2, histB$metodo, mean))
+knitr::kable(data.frame(metodo = names(rmseHistB), RMSE = as.numeric(rmseHistB)),
+             digits = 5, caption = "RMSE conjunto de las tres ventanas")
+```
+
+Holt-Winters obtiene el menor RMSE conjunto (`r f(rmseHistB["HW"],4)` mil visitantes), seguido por la mediana del segundo SARIMA (`r f(rmseHistB["SAR2_mediana"],4)` mil). Entre los SARIMA, la mediana del segundo candidato vuelve a tener el menor error conjunto. Recomendamos Holt-Winters si la prioridad es la precisión operativa; para el análisis SARIMA elegimos el modelo con mejores residuos y menor RMSE entre los candidatos. Estas ventanas usan órdenes fijos y son un complemento retrospectivo, no una nueva selección independiente.
 
 ## B6. El pronóstico para la aerolínea
 
 ```{r}
-# Pendiente: Modelo final, ocho trimestres con IC95%, 2012-T4 y 2014-T3, total de 2013 frente a 2011 y mensaje para la aerolínea.
+#| label: B6
+#| fig-height: 4
+# Primero exigimos que Ljung-Box no rechace al 5 % en K = 8, 12, 16.
+# Luego preferimos parámetros significativos; si ninguno cumple ambos
+# criterios, conservamos el que tenga residuos adecuados y lo justificamos.
+valido <- c(all(LB$p[1:3]>=.05),all(LB$p[4:6]>=.05))
+parsimonioso <- c(nrow(sobra1)==0,nrow(sobra2)==0)
+# Comprobación adicional: media y mediana del segundo candidato.
+compRetrans2 <- rbind(Mediana = medidas(bva, med2, escalaB),
+                      Media = medidas(bva, media2, escalaB))
+knitr::kable(compRetrans2, digits = 4,
+             caption = "Retransformación del segundo SARIMA")
+rmseSar <- c(min(compB[c(1,3),"RMSE"]), min(compRetrans2[,"RMSE"]))
+# Comparación explícita de las restricciones en el entrenamiento.
+reglasB <- data.frame(candidato = c(nombreB(oB1), nombreB(oB2)),
+                      SBC = tabB$SBC[1:2],
+                      convergencia = c(fitB1$code, fitB2$code) == 0,
+                      Ljung_Box = valido, todos_t_significativos = parsimonioso,
+                      RMSE = rmseSar)
+knitr::kable(reglasB, digits = 4, caption = "Restricciones de selección del caso B")
+elegibles <- which(valido & parsimonioso)
+if (!length(elegibles)) elegibles <- which(valido)
+# No se selecciona automáticamente un modelo si ambos fallan el diagnóstico.
+if (!length(elegibles)) stop("Revisar ambos SARIMA: fallan el diagnóstico residual")
+finalB <- elegibles[which.min(rmseSar[elegibles])]
+ordenFinalB <- if(finalB==1) oB1 else oB2
+# Para planear capacidad usamos la mediana si su RMSE de validación es menor.
+rmseMed <- if (finalB == 1) compB[1,"RMSE"] else compRetrans2[1,"RMSE"]
+rmseMedia <- if (finalB == 1) compB[3,"RMSE"] else compRetrans2[2,"RMSE"]
+retransB <- if (rmseMedia < rmseMed) "media" else "mediana"
+fitBfull <- ajustarB(log(b),ordenFinalB)
+stopifnot(fitBfull$code==0)
+# Diagnóstico final de ambos modelos, después de elegir con el entrenamiento.
+fitB1full <- ajustarB(log(b), oB1)
+fitB2full <- ajustarB(log(b), oB2)
+stopifnot(fitB1full$code == 0, fitB2full$code == 0)
+LBcompleto <- rbind(lbB(residuals(fitB1full)[-(1:5)], fitB1full, "Candidato 1"),
+                    lbB(residuals(fitB2full)[-(1:5)], fitB2full, "Candidato 2"))
+knitr::kable(LBcompleto, digits = 4, caption = "Ljung-Box de ambos SARIMA con 91 datos")
+tcompleto <- rbind(data.frame(candidato = 1, coefB(fitB1full)),
+                   data.frame(candidato = 2, coefB(fitB2full)))
+knitr::kable(tcompleto, digits = 4, caption = "Significancia de ambos modelos reestimados")
+eBfull <- residuals(fitBfull)[-(1:5)]
+lbBfull <- lbB(eBfull, fitBfull, "Modelo final")
+knitr::kable(coefB(fitBfull),digits=3,caption="Modelo de viajeros reestimado con 91 observaciones")
+pfB <- predict(fitBfull,n.ahead=8)
+muB <- as.numeric(pfB$pred); seB <- as.numeric(pfB$se)
+medB <- exp(muB); espB <- exp(muB+seB^2/2)
+liB <- exp(muB-1.96*seB); lsB <- exp(muB+1.96*seB)
+fechaB <- c("2012-T4",paste0("2013-T",1:4),paste0("2014-T",1:3))
+tablaFinalB <- data.frame(trimestre=fechaB,mediana=medB,media=espB,
+                          LI95=liB,LS95=lsB)
+knitr::kable(tablaFinalB,digits=3,caption="Pronósticos e intervalos del 95 % (miles de visitantes)")
+total13 <- sum(espB[2:5])
+total11 <- sum(window(b,start=c(2011,1),end=c(2011,4)))
+c(total_esperado_2013=total13,total_observado_2011=total11,
+  cambio_pct=100*(total13/total11-1),verano_esperado=sum(espB[1:2]))
+
+puntoB <- if(retransB=="media") espB else medB
+inicioB <- c(2012,4)
+ts.plot(window(b,start=c(2007,1)),ts(puntoB,start=inicioB,frequency=4),
+        ts(liB,start=inicioB,frequency=4),ts(lsB,start=inicioB,frequency=4),
+        col=c("black","blue","blue","blue"),lty=c(1,1,2,2),
+        ylab="Miles de visitantes",xlab="Año",main="Pronóstico para la aerolínea")
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+**Respuesta.** Ningún candidato cumple simultáneamente los criterios de significancia y Ljung-Box en entrenamiento; priorizamos los residuos sin evidencia de autocorrelación. Elegimos el SARIMA `r nombreB(ordenFinalB)` porque no rechazamos la ausencia de autocorrelación en los tres contrastes de B4, aunque el AR estacional adicional no es significativo en entrenamiento ($t=`r f(tB2$t[tB2$parametro=="sar1"],3)`$). Holt-Winters obtiene el menor RMSE general (`r f(compB[5,"RMSE"],3)` mil), pero entre los SARIMA preferimos el segundo con la mediana, cuyo RMSE es `r f(compRetrans2[1,"RMSE"],3)` mil frente a `r f(compRetrans2[2,"RMSE"],3)` mil de la media. Después de reestimar con los 91 trimestres, los tres valores p de Ljung-Box son `r paste(f(lbBfull$p[1],4),f(lbBfull$p[2],4),f(lbBfull$p[3],4),sep="; ")`, todos mayores que 0,05. Para 2013 esperamos `r f(total13,2)` mil visitantes frente a `r f(total11,2)` mil en 2011, una variación de `r f(100*(total13/total11-1),2)` %, calculada con la suma de las medias trimestrales.
+
+**Mensaje para la aerolínea.** Para el verano austral recomendamos planear alrededor de `r f(puntoB[1],1)` mil llegadas en 2012-T4 (intervalo del 95 %: [`r f(liB[1],1)`; `r f(lsB[1],1)`] mil) y `r f(puntoB[2],1)` mil en 2013-T1 (intervalo: [`r f(liB[2],1)`; `r f(lsB[2],1)`] mil). Para 2014-T3 el pronóstico es `r f(puntoB[8],1)` mil con un intervalo de [`r f(liB[8],1)`; `r f(lsB[8],1)`] mil, por lo que recomendamos capacidad flexible. Planear con la media en lugar de la mediana aumenta la capacidad prevista y puede reducir faltantes, pero también aumenta el riesgo de plazas vacías. Las cifras representan las llegadas totales, no los pasajeros de una sola aerolínea.
 
 # Declaración de uso de asistentes de inteligencia artificial
 
-Se utilizó ChatGPT para revisar los requisitos del enunciado, organizar la estructura del repositorio y preparar una plantilla inicial de Quarto, incluida la carga y partición de datos. Completar esta declaración con cualquier uso posterior.
+Se utilizó ChatGPT para revisar el enunciado y las notas del curso, organizar el repositorio, preparar la plantilla inicial y auditar y reformular el código y las interpretaciones del caso A. Se utilizó Claude (Anthropic) para entender el enunciado y apoyar la versión inicial del código y las interpretaciones del caso A. El equipo ejecutó en R los análisis de los casos A y B y revisó las salidas. También se utilizó ChatGPT para desarrollar y revisar el código, las ecuaciones, las interpretaciones del caso B, apoyar la redacción del documento técnico e incorporar el código y la interpretación del bono HEGY a partir de la documentación de uroot.
 
 # Información de la sesión
 

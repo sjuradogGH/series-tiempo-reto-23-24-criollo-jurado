@@ -1,0 +1,213 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-nodecimaldot]{babel}
+\usepackage{lmodern,amsmath,amssymb,booktabs,tabularx,array,microtype,geometry,xcolor,fancyhdr,caption}
+\geometry{top=2.1cm,bottom=2.1cm,left=2.35cm,right=2.35cm}
+\definecolor{verde}{HTML}{284D3A}
+\definecolor{gris}{HTML}{52605A}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlength{\headheight}{15pt}
+\renewcommand{\arraystretch}{1.13}
+\captionsetup{font=small,labelfont=bf,skip=5pt}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{gris} Series de tiempo univariadas}
+\fancyhead[R]{\small\color{gris} 2026-II}
+\fancyfoot[L]{\small\color{gris} Criollo -- Jurado}
+\fancyfoot[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\newcommand{\seccion}[1]{\section*{\color{verde}#1}}
+\newcommand{\sub}[1]{\vspace{2pt}\textbf{#1}\par}
+\newcommand{\nota}[1]{\par\smallskip{\footnotesize\color{gris}#1}\par}
+\newcommand{\tabcap}[1]{\par\smallskip\textbf{\small #1}\par\smallskip}
+\begin{document}
+\begin{titlepage}
+\thispagestyle{empty}
+{\large\bfseries\color{verde} UNIVERSIDAD NACIONAL DE COLOMBIA}\par
+\smallskip
+{\normalsize Sede Medellín · Facultad de Ciencias\par Departamento de Estadística}\par
+\vspace{1cm}
+{\color{verde}\rule{\textwidth}{1.5pt}}\par
+\vspace{2.1cm}
+{\small\bfseries\color{gris} DOCUMENTO TÉCNICO}\par
+\vspace{0.35cm}
+{\fontsize{30}{36}\selectfont\bfseries\color{verde} Pronóstico de dos\\ series estacionales\par}
+\vspace{0.55cm}
+{\Large Concentración de CO$_2$ en Mauna Loa y llegadas de viajeros del Reino Unido a Australia\par}
+\vspace{1.35cm}
+{\large Sarah Catalina Criollo García\par Sara Jurado Giraldo\par}
+\vfill
+{\color{verde}\rule{\textwidth}{0.8pt}}\par
+\medskip
+\textbf{Series de tiempo univariadas — 3009297}\par
+Reto en clase · Clases 23 y 24\par
+26 de noviembre de 2026\par
+\end{titlepage}
+\seccion{1. Resumen}
+Estimamos dos modelos SARIMA para pronosticar la concentración mensual de CO$_2$ y las llegadas trimestrales de viajeros a Australia. Para el CO$_2$ elegimos el SARIMA$(0,1,1)(0,1,1)_{12}$, con RMSE de 0,225385 ppm en validación; el pronóstico de mayo de 2026 es 432,760 ppm, con intervalo de predicción del 95\% [431,608; 433,912]. Para los viajeros seleccionamos el SARIMA$(0,1,1)(1,1,1)_4$ sobre el logaritmo: la mediana pronosticada para 2012-T4 es 200,231 mil [174,282; 230,044] y para 2014-T3 es 94,382 mil [76,935; 115,786]. Holt-Winters multiplicativo obtiene el menor RMSE en este segundo caso, aunque el SARIMA elegido tiene mejores diagnósticos residuales que el otro candidato. El total esperado de viajeros en 2013 es 567,668 mil.
+\seccion{2. Datos}
+Utilizamos los dos CSV suministrados en el reto. Los promedios mensuales de CO$_2$ provienen de NOAA Global Monitoring Laboratory y Scripps Institution of Oceanography; las llegadas trimestrales, de Tourism Research Australia, compiladas en el paquete \textit{fpp2} de Hyndman y Athanasopoulos (2018).
+\tabcap{Tabla 1. Series y particiones de los datos}
+\small
+\begin{tabularx}{\textwidth}{@{}lXXX@{}}\toprule
+Serie & Periodo disponible & Entrenamiento & Validación\\\midrule
+CO$_2$ (ppm) & 2012-01 a 2025-09 & 2012-01 a 2024-09 & 2024-10 a 2025-09\\
+Mensual, $s=12$ & 165 meses & 153 meses & 12 meses\\\addlinespace
+Viajeros (miles) & 1990-T1 a 2012-T3 & 1990-T1 a 2010-T3 & 2010-T4 a 2012-T3\\
+Trimestral, $s=4$ & 91 trimestres & 83 trimestres & 8 trimestres\\\bottomrule
+\end{tabularx}
+\normalsize
+\nota{Las particiones reservadas permiten evaluar pronósticos de un único origen sin actualizar el modelo durante la validación.}
+\seccion{3. Modelo del CO$_2$}
+\sub{Transformación e identificación}
+La serie crece 2,564 ppm por año en promedio y 3,020 ppm en el último año. El máximo del ciclo ocurre en mayo y el mínimo en septiembre, con una oscilación de 6,746 ppm. Como la amplitud no aumenta con el nivel, conservamos la escala original: $\lambda=1$ pertenece al intervalo Box-Cox [--7,23; 2,23] y $G(1)=2,126<3,841$. El máximo supera al mínimo del entrenamiento en solo 9,11\%.
+La ACF de la diferencia regular en 12, 24 y 36 es 0,861; 0,790 y 0,726. Tras diferenciar solo estacionalmente, la ACF en 1 a 6 va de 0,671 a 0,307, por lo que tomamos $d=D=1$. La doble diferencia tiene picos negativos en 1 y 12 ( --0,294 y --0,475); el modelo de aerolínea obtiene SBC de --222,759, y el candidato con AR estacional adicional queda a 1,502 unidades. Preferimos el primero por tener un parámetro menos.
+\newpage
+\sub{3. Modelo del CO$_2$ (continuación): estimación y validación}
+El modelo estimado en entrenamiento, sin constante, es
+\[
+\nabla\nabla_{12}Z_t=(1-0{,}486B)(1-0{,}816B^{12})a_t,\qquad
+\widehat\sigma_a^2=0{,}135328,
+\]
+con $a_t\sim WN(0,\sigma_a^2)$.
+\tabcap{Tabla 2. Coeficientes del CO$_2$}
+{\small\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lrrrrr@{}}\toprule
+Parámetro & Est. entren. & EE entren. & $t$ & Est. final & EE final\\\midrule
+$\theta$ & 0,486 & 0,086 & 5,634 & 0,4965 & 0,0803\\
+$\Theta$ & 0,816 & 0,087 & 9,402 & 0,9067 & 0,1181\\\bottomrule
+\end{tabular*}}
+\nota{Máxima verosimilitud con 153 y 165 meses, respectivamente; coeficientes sin unidades. EE: error estándar.}
+Los módulos de las raíces MA son 2,058 y 1,017, por lo que el modelo es invertible. Ljung-Box da $Q(24)=22,046$ (22 grados de libertad, $p=0,4572$) y Jarque-Bera da 0,646 ($p=0,724$). No se detectan atípicos con los filtros aplicados (máximo 3,315); en el sobreajuste, todos los parámetros adicionales tienen $|t|\le 1,530$. El intervalo de Wald de $\Theta$ en entrenamiento es [0,646; 0,986].
+\tabcap{Tabla 3. Validación del CO$_2$}
+{\small\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lrrr@{}}\toprule
+Método & RMSE (ppm) & MAPE (\%) & MASE\\\midrule
+SARIMA & 0,225385 & 0,048516 & 0,081965\\
+Holt-Winters aditivo & 0,281920 & 0,056003 & 0,094567\\
+Ingenuo estacional & 3,066233 & 0,707772 & 1,195821\\\bottomrule
+\end{tabular*}}
+\nota{Octubre de 2024 a septiembre de 2025; escala del MASE: 2,525461 ppm en entrenamiento.}
+El SARIMA reduce el RMSE 20,1\% frente a Holt-Winters y cubre las 12 observaciones con sus intervalos del 95\%. Reestimamos con los 165 meses ($\widehat\sigma_a^2=0{,}1228$):
+\[\nabla\nabla_{12}Z_t=(1-0{,}4965B)(1-0{,}9067B^{12})a_t.\]
+\tabcap{Tabla 4. Pronóstico de CO$_2$ (ppm)}
+{\small\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lrrr@{}}\toprule
+Mes & Pronóstico & LI 95\% & LS 95\%\\\midrule
+2025-10 & 424,631 & 423,939 & 425,323\\
+2025-11 & 426,242 & 425,468 & 427,017\\
+2025-12 & 427,702 & 426,853 & 428,552\\
+2026-01 & 428,900 & 427,982 & 429,818\\
+2026-02 & 429,770 & 428,788 & 430,751\\
+2026-03 & 430,489 & 429,447 & 431,531\\
+2026-04 & 432,051 & 430,952 & 433,149\\
+2026-05 & 432,760 & 431,608 & 433,912\\
+2026-06 & 432,175 & 430,972 & 433,379\\
+2026-07 & 430,334 & 429,081 & 431,587\\
+2026-08 & 428,217 & 426,917 & 429,517\\
+2026-09 & 426,925 & 425,579 & 428,270\\\bottomrule
+\end{tabular*}}
+\nota{LI y LS: límites de predicción del 95\%. Origen: septiembre de 2025.}
+\newpage
+\seccion{4. Modelo de los viajeros}
+\sub{Transformación e identificación}
+La oscilación pasa de 46,790 mil visitantes en 1990 a 131,683 mil en 2005. El perfil Box-Cox tiene su mínimo en $\widehat\lambda=0,08$; $G(1)=35,357$ y $G(0,5)=8,274$ superan el valor crítico 3,841, mientras que $G(0)=0,330$ no lo supera. Elegimos $Y_t=\ln Z_t$.
+
+Las autocorrelaciones del logaritmo en 4, 8 y 12 son 0,914; 0,819 y 0,722, por lo que tomamos $D=1$. La prueba ADF con constante sobre $\nabla_4 Y_t$ selecciona cuatro rezagos por BIC; $\tau=-1,959$ es mayor que el valor crítico --2,901, de modo que no rechazamos la raíz regular y usamos $d=1$. La ACF de la doble diferencia tiene picos negativos en 1 y 4 ( --0,603 y --0,550). Los dos mejores candidatos tienen SBC de --372,851 y --372,403, una diferencia de 0,448.
+\sub{Estimación de los candidatos}
+\begin{align*}
+C_1:\quad \nabla\nabla_4\ln Z_t&=(1-0{,}676B)(1-0{,}599B^4)a_t,\\
+C_2:\quad (1+0{,}238B^4)\nabla\nabla_4\ln Z_t&=(1-0{,}663B)(1-0{,}465B^4)a_t.
+\end{align*}
+Las varianzas estimadas son 0,005302 y 0,005157, respectivamente. En ambos modelos $a_t\sim WN(0,\sigma_a^2)$.
+\tabcap{Tabla 5. Parámetros de los dos candidatos en entrenamiento}
+{\small\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}llrrr@{}}\toprule
+Modelo & Parámetro & Estimación & EE & $t$\\\midrule
+$C_1$ & $\theta$ & 0,676 & 0,077 & 8,768\\
+$C_1$ & $\Theta$ & 0,599 & 0,087 & 6,872\\
+$C_2$ & $\theta$ & 0,663 & 0,078 & 8,464\\
+$C_2$ & $\Phi$ & --0,238 & 0,162 & --1,476\\
+$C_2$ & $\Theta$ & 0,465 & 0,139 & 3,339\\\bottomrule
+\end{tabular*}}
+\nota{Coeficientes sin unidades; signos MA según la notación del enunciado.}
+\tabcap{Tabla 6. Diagnóstico Ljung-Box de los viajeros}
+{\small\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lrrrr@{}}\toprule
+Modelo & $K$ & gl & $Q$ & Valor $p$\\\midrule
+$C_1$ & 8 & 6 & 9,5339 & 0,1457\\
+$C_1$ & 12 & 10 & 18,8825 & 0,0418\\
+$C_1$ & 16 & 14 & 20,0833 & 0,1275\\
+$C_2$ & 8 & 5 & 7,0745 & 0,2152\\
+$C_2$ & 12 & 9 & 15,0466 & 0,0897\\
+$C_2$ & 16 & 13 & 16,5573 & 0,2203\\\bottomrule
+\end{tabular*}}
+\nota{78 residuos; $K-m$ grados de libertad y nivel de significancia del 5\%.}
+En $C_1$ se rechaza la ausencia de autocorrelación para $K=12$, mientras que en $C_2$ no se rechaza en ninguno de los tres contrastes. Los valores $p$ de Jarque-Bera son 0,531 y 0,537. Los máximos absolutos de atípicos son 2,939 y 3,106; ninguno supera 3,5. El AR estacional de $C_2$ no es significativo en entrenamiento ($t=-1,476$). Aun así, preferimos este modelo entre los dos candidatos porque no se rechaza la ausencia de autocorrelación en ninguno de los tres contrastes y su RMSE es menor. La elección no implica que el parámetro adicional sea indispensable.
+\newpage
+\sub{4. Modelo de los viajeros (continuación): pronóstico}
+\tabcap{Tabla 7. Comparación de los cinco pronósticos}
+{\small\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lrrr@{}}\toprule
+Método & RMSE (mil) & MAPE (\%) & MASE\\\midrule
+SARIMA 1 — mediana & 8,3381 & 4,3593 & 0,6837\\
+SARIMA 2 — mediana & 8,1542 & 3,9237 & 0,6310\\
+SARIMA 1 — media & 8,5410 & 4,6694 & 0,7274\\
+Ingenuo estacional & 14,2659 & 7,3152 & 1,1661\\
+Holt-Winters multiplicativo & 7,6094 & 3,3876 & 0,5445\\\bottomrule
+\end{tabular*}}
+\nota{Validación: 2010-T4 a 2012-T3. Escala MASE: 9,858823 mil visitantes.}
+Holt-Winters gana en las tres medidas: su RMSE es 0,545 mil menor (6,7\%) que el de $C_2$. En tres ventanas históricas adicionales, con órdenes SARIMA fijos, también obtiene el menor RMSE conjunto (11,073 frente a 12,176 de la mediana de $C_2$). Entre los SARIMA elegimos $C_2$ por sus residuos y su menor error. Si el logaritmo futuro tiene media $\mu$ y varianza $v$, la mediana es $\exp(\mu)$ y la media es $\exp(\mu+v/2)$. La comprobación adicional de $C_2$ favorece la mediana (RMSE 8,154 frente a 8,272 de la media). Usamos la mediana para el pronóstico puntual y la media para calcular el total esperado de 2013.
+
+El modelo reestimado con los 91 trimestres queda
+\[
+(1+0{,}296B^4)\nabla\nabla_4\ln Z_t=(1-0{,}673B)(1-0{,}447B^4)a_t.
+\]
+Los errores estándar de $\theta$, $\Phi$ y $\Theta$ son 0,073; 0,151 y 0,135, respectivamente; el AR estacional tiene $t=-1,964$ en el ajuste final, muy cerca del umbral de significancia. Los valores $p$ de Ljung-Box del ajuste final son 0,1810; 0,1654 y 0,3369 para $K=8,12,16$; el primer candidato aún se rechaza para $K=12$ ($p=0,0426$).
+\tabcap{Tabla 8. Pronóstico trimestral (miles de visitantes)}
+{\small\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lrrrr@{}}\toprule
+Trimestre & Mediana & Media & LI 95\% & LS 95\%\\\midrule
+2012-T4 & 200,231 & 200,734 & 174,282 & 230,044\\
+2013-T1 & 181,699 & 182,204 & 157,011 & 210,269\\
+2013-T2 & 94,804 & 95,093 & 81,360 & 110,470\\
+2013-T3 & 98,155 & 98,481 & 83,682 & 115,132\\
+2013-T4 & 191,091 & 191,889 & 159,786 & 228,531\\
+2014-T1 & 176,451 & 177,263 & 146,240 & 212,903\\
+2014-T2 & 89,690 & 90,140 & 73,706 & 109,139\\
+2014-T3 & 94,382 & 94,896 & 76,935 & 115,786\\\bottomrule
+\end{tabular*}}
+\nota{Los límites se obtienen exponenciando los extremos del intervalo del logaritmo. Origen: 2012-T3.}
+\sub{Recomendación para la aerolínea}
+Para el verano austral de 2012–2013 recomendamos planear alrededor de 200,2 mil llegadas en T4 y 181,7 mil en T1, con capacidad flexible según los intervalos de la tabla. Esperamos 567,668 mil visitantes en 2013, frente a 608,101 mil observados en 2011 (una reducción del 6,65\%). Planear con la media aumenta la capacidad prevista y puede reducir faltantes, pero también aumenta el riesgo de plazas vacías; las llegadas totales no equivalen a los pasajeros de una sola aerolínea.
+\newpage
+\setlength{\parskip}{3pt}
+\seccion{5. Comparación de los dos modelos}
+Aunque en ambas series tomamos $d=D=1$, los patrones estacionales son diferentes. En el CO$_2$ la amplitud no aumenta con el nivel y en los viajeros sí, por lo que usamos logaritmos en el segundo caso.
+\tabcap{Tabla 9. Comparación del coeficiente MA estacional}
+{\small\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lrrr@{}}\toprule
+Serie & $\widehat\Theta$ entren. & $\widehat\Theta$ final & EE final\\\midrule
+CO$_2$ & 0,816 & 0,9067 & 0,1181\\
+Viajeros ($C_2$) & 0,465 & 0,447 & 0,135\\\bottomrule
+\end{tabular*}}
+\nota{Coeficientes sin unidades; ajustes finales con 165 meses y 91 trimestres.}
+En el CO$_2$, $\widehat\Theta$ está más cerca de uno: el patrón anual cambia lentamente. Si $\Theta=1$, se cancelaría la diferencia estacional $1-B^s$ y el patrón de largo plazo sería fijo. El intervalo de Wald final del CO$_2$, [0,675; 1,138], incluye uno, sin demostrar cancelación exacta. En viajeros, $\widehat\Theta$ es menor y el patrón evoluciona más. Con $\Theta=1$ también se cancelaría la diferencia estacional, aunque permanecería el AR estacional y en ambos casos el nivel podría seguir cambiando.
+
+HEGY no rechaza la raíz regular (valores $p$ de 0,9918 y 0,1893, sin y con tendencia) y rechaza las raíces estacionales al 5\%. No determina la multiplicidad de la raíz regular. Conservamos la doble diferencia por su utilidad predictiva.
+
+En CO$_2$ gana el SARIMA en validación (RMSE 0,225385 frente a 0,281920 ppm de Holt-Winters); en seis ventanas anteriores quedan cerca (0,52172 y 0,51846 ppm). En viajeros gana Holt-Winters (7,6094 frente a 8,1542 mil) y también en tres ventanas anteriores (11,07325 frente a 12,17560 mil). Las ventanas adicionales usan órdenes fijos. Recomendamos partir de modelos sencillos, revisar sus residuos y validar fuera del entrenamiento.
+\seccion{6. Limitaciones y referencias}
+\textbf{Caso A: CO$_2$.}
+\begin{itemize}
+\setlength{\itemsep}{1pt}\setlength{\parskip}{0pt}\setlength{\topsep}{2pt}
+\item El SARIMA gana en los 12 meses de validación; este periodo es corto.
+\item El ciclo anual cambia poco, pero cambios en emisiones o absorción de carbono podrían alterar el pronóstico. El ancho del intervalo aumenta de 1,384 a 2,692 ppm.
+\end{itemize}
+\textbf{Caso B: viajeros.}
+\begin{itemize}
+\setlength{\itemsep}{1pt}\setlength{\parskip}{0pt}\setlength{\topsep}{2pt}
+\item Holt-Winters gana en la validación oficial y en el conjunto de las tres ventanas anteriores. El AR estacional del segundo SARIMA no fue significativo en entrenamiento.
+\item Cambios económicos o de transporte pueden afectar las llegadas. Pronosticamos el total de viajeros, no los pasajeros de una sola aerolínea.
+\end{itemize}
+\textbf{En ambos casos:} ningún estadístico de atípicos superó 3,5 con los filtros aplicados; falta contrastar el procedimiento con el material específico del curso.
+
+{\small
+\textbf{Referencias.} Universidad Nacional de Colombia, Departamento de Estadística (2026-II). \textit{Series de tiempo univariadas: Reto en clase, clases 23 y 24} y materiales del curso. NOAA Global Monitoring Laboratory y Scripps Institution of Oceanography. \textit{Trends in Atmospheric Carbon Dioxide}. Tourism Research Australia; Hyndman, R. J. y Athanasopoulos, G. (2018). \textit{Forecasting: Principles and Practice}, 2.ª ed., datos de \textit{fpp2}. R 4.3.3; documentación de \textit{uroot} 2.1-3 (HEGY).
+
+\textbf{Uso de asistentes.} Se utilizó ChatGPT para apoyar la organización, el análisis, la revisión del código y la redacción; Claude apoyó el desarrollo inicial del caso A. Las cifras de este informe corresponden a las salidas de R de los casos A y B.}
+\end{document}

@@ -1,15 +1,17 @@
 ---
-title: "Reto en clase 23 y 24 — Series de tiempo univariadas"
-author:
-  - "Nombre completo integrante 1"
-  - "Nombre completo integrante 2"
+title: "Reto en clase. Clases 23 y 24"
+subtitle: "Series de tiempo univariadas, 3009297, 2026-II"
+author: "Sarah Catalina Criollo García y Sara Jurado Giraldo"
+lang: es
 format:
   html:
     embed-resources: true
     toc: true
+    number-sections: false
 execute:
-  echo: true
-  error: false
+  echo: false
+  warning: false
+  message: false
 ---
 
 ```{r}
@@ -27,47 +29,218 @@ stopifnot(length(co2_entrenamiento) == 153, length(co2_validacion) == 12,
           length(viajeros_entrenamiento) == 83, length(viajeros_validacion) == 8)
 ```
 
+
+
+```{r}
+#| label: setup
+library(urca)
+
+pareja <- "criollo-jurado"   # <- CAMBIAR por sus apellidos, minúsculas y sin tildes
+
+# Formato de cifras con coma decimal
+f <- function(x, k = 2) formatC(as.numeric(x), format = "f", digits = k, decimal.mark = ",")
+meses <- c("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+           "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+
+# Transformación de Box y Cox normalizada por la media geométrica
+bc <- function(x, l) {
+  g <- exp(mean(log(x)))
+  if (abs(l) < 1e-8) g * log(x) else (x^l - 1) / (l * g^(l - 1))
+}
+
+# Perfil G(lambda) = n* ln[S(lambda)/S(lambda_hat)], AR(4) con constante sobre la doble diferencia
+perfil_bc <- function(x, s, lams = seq(-2, 3, by = 0.05)) {
+  S <- sapply(lams, function(l) {
+    y <- diff(diff(bc(x, l), s))
+    sum(ar.ols(y, aic = FALSE, order.max = 4, demean = TRUE, intercept = TRUE)$resid^2, na.rm = TRUE)
+  })
+  nstar <- length(x) - s - 5
+  data.frame(lambda = lams, S = S, G = nstar * log(S / min(S)))
+}
+
+# Pesos pi del modelo: a_t = pi(B) Z_t
+pi_pesos <- function(fit, n) {
+  cf <- coef(fit); a <- fit$arma; s <- a[5]
+  get <- function(pref, k) if (k > 0) cf[paste0(pref, seq_len(k))] else numeric(0)
+  mul <- function(x, y) {
+    r <- numeric(length(x) + length(y) - 1)
+    for (i in seq_along(x)) r[i:(i + length(y) - 1)] <- r[i:(i + length(y) - 1)] + x[i] * y
+    r
+  }
+  est <- function(c) { if (length(c) == 0) return(1); v <- numeric(length(c) * s + 1); v[1] <- 1; v[seq_along(c) * s + 1] <- c; v }
+  num <- mul(c(1, -get("ar", a[1])), est(-get("sar", a[3])))
+  for (i in seq_len(a[6])) num <- mul(num, c(1, -1))
+  for (i in seq_len(a[7])) num <- mul(num, c(1, rep(0, s - 1), -1))
+  den <- mul(c(1, get("ma", a[2])), est(get("sma", a[4])))
+  num <- c(num, numeric(max(0, n - length(num))))
+  den <- c(den, numeric(max(0, n - length(den))))
+  p <- numeric(n)
+  for (j in 1:n) p[j] <- num[j] - if (j > 1) sum(den[2:j] * p[(j - 1):1]) else 0
+  p
+}
+
+# Estadísticos de detección de atípicos (Clase 22): IO, AO, LS y TC
+atipicos <- function(fit, delta = 0.7) {
+  a <- as.numeric(residuals(fit)); n <- length(a)
+  k0 <- fit$arma[6] + fit$arma[5] * fit$arma[7]
+  ae <- a[-(1:k0)]
+  sig <- 1.483 * median(abs(ae - median(ae)))
+  p <- pi_pesos(fit, n)
+  x_ls <- cumsum(p)
+  x_tc <- as.numeric(stats::filter(p, delta, method = "recursive"))
+  out <- lapply((k0 + 1):n, function(T) {
+    m <- n - T + 1; aa <- a[T:n]
+    lam <- function(x) { x <- x[1:m]; sum(x * aa) / sqrt(sum(x^2)) / sig }
+    data.frame(T = T, IO = a[T] / sig, AO = lam(p), LS = lam(x_ls), TC = lam(x_tc))
+  })
+  do.call(rbind, out)
+}
+
+# Medidas de error
+medidas <- function(obs, pron, escala) {
+  e <- obs - pron
+  c(RMSE = sqrt(mean(e^2)), MAPE = 100 * mean(abs(e / obs)), MASE = mean(abs(e)) / escala)
+}
+```
 # Caso A: CO₂ de Mauna Loa
+
+Trabajamos en este caso A con los datos del observatorio de Mauna Loa, en Hawái, los datos proporcinados se encargan de mide desde 1958 la concentración de dióxido de carbono en el aire, y su registro es la referencia mundial para seguir el aumento de este gas. 
+
+```{r}
+#| label: datos-A
+dA <- read.csv("datos/co2-mauna-loa-mensual-2012-2025.csv")
+z <- ts(dA$co2_ppm, start = c(2012, 1), frequency = 12)
+ztr <- window(z, end = c(2024, 9))      # entrenamiento: 2012-01 a 2024-09
+zva <- window(z, start = c(2024, 10))   # validación: 2024-10 a 2025-09
+c(n = length(z), entrenamiento = length(ztr), validacion = length(zva))
+```
+
+De los datos que obtuvimos tenemos que n=165 meses en total, los primeros 153 se usan para identificar y estimar el modelo, y los últimos doce, de octubre de 2024 a septiembre de 2025, para validarlo. Adicionalmente vemos que la serie tiene dos rasgos claros.
+1. Tenemos una tendencia creciente ya que se emite más carbono del que los océanos y la vegetación alcanzan a absorber. 2. Tenemmos un ciclo anual porque las plantas del hemisferio norte capturan CO~2~ durante el verano boreal y lo liberan en el invierno.
+
+El objetivo de la realización de este caso es construir un modelo SARIMA que recoja los rasgos de la serie, compararlo con métodos sencillos y pronosticar con intervalos del 95 % los doce meses de octubre de 2025 a septiembre de 2026.
+
 
 ## A1. Mirar la serie
 
 ```{r}
-# Pendiente: Crecimiento medio anual y último año; meses máximo y mínimo; amplitud en ppm y dependencia del nivel.
+#| label: A1
+#| fig-height: 4
+plot(z, ylab = "CO2 (ppm)", xlab = "Año", main = "CO2 mensual en Mauna Loa, 2012-01 a 2025-09")
+abline(v = 2024 + 9/12, lty = 2, col = "grey40")
+
+d12 <- diff(z, 12)                        # crecimiento interanual mes a mes
+crec_medio  <- mean(d12)
+crec_ultimo <- mean(tail(d12, 12))        # oct-2024 a sep-2025 frente al año anterior
+
+tend <- stats::filter(z, c(0.5, rep(1, 11), 0.5) / 12)   # media móvil 2x12
+perfil_mes <- tapply(z - tend, cycle(z), mean, na.rm = TRUE)
+mes_max <- which.max(perfil_mes); mes_min <- which.min(perfil_mes)
+osc <- max(perfil_mes) - min(perfil_mes)
+
+anios <- floor(time(z))
+completos <- names(which(table(anios) == 12))
+amp_anual <- tapply(z, anios, function(x) max(x) - min(x))[completos]
+nivel_anual <- tapply(z, anios, mean)[completos]
+cor_amp <- cor(amp_anual, nivel_anual)
+
+round(perfil_mes, 2)
+rbind(nivel = round(nivel_anual, 1), amplitud = round(amp_anual, 2))
+c(crec_medio = crec_medio, crec_ultimo = crec_ultimo, oscilacion = osc, cor_amp_nivel = cor_amp)
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+```{r}
+#| label: A1-fig
+#| fig-height: 3.5
+plot(as.numeric(nivel_anual), as.numeric(amp_anual), pch = 19,
+     xlab = "Nivel medio del año (ppm)", ylab = "Máx - mín del año (ppm)",
+     main = "Amplitud del ciclo anual frente al nivel")
+```
+
+**Respuesta.** Con base a las pruebas vemos que la serie sube en promedio `r f(crec_medio)` ppm por año (media de las diferencias $\nabla_{12}Z_t$) y en el último año, de octubre de 2024 a septiembre de 2025, subió `r f(crec_ultimo)` ppm, más rápido que el promedio. 
+
+El ciclo anual tiene el máximo en `r meses[mes_max]` y el mínimo en `r meses[mes_min]`, y tambien podemos observar que presenta una oscilación entre los dos, una vez quitada la tendencia con una media móvil 2×12, es de `r f(osc)` ppm. 
+
+La amplitud anual que evidenciamos va de `r f(min(amp_anual))` a `r f(max(amp_anual))` ppm y no crece con el nivel (la correlación entre amplitud y nivel es `r f(cor_amp)`), de modo que el ciclo es aditivo: la vegetación toma y devuelve aproximadamente la misma cantidad de CO~2~ cada año.
 
 ## A2. ¿Hace falta transformar?
 
 ```{r}
-# Pendiente: Perfil Box-Cox, valores compatibles de lambda, variación relativa del nivel y decisión.
+#| label: A2
+#| fig-height: 4
+pA <- perfil_bc(ztr, 12)
+lam_hat <- pA$lambda[which.min(pA$S)]
+compat  <- range(pA$lambda[pA$G < qchisq(0.95, 1)])
+G_en <- function(l) pA$G[which.min(abs(pA$lambda - l))]
+plot(pA$lambda, pA$G, type = "l", xlab = expression(lambda), ylab = expression(G(lambda)),
+     main = "Perfil de Box y Cox, CO2 (entrenamiento)")
+abline(h = qchisq(0.95, 1), lty = 2, col = "red")
+rel <- max(ztr) / min(ztr)
+c(lambda_hat = lam_hat, lim_inf = compat[1], lim_sup = compat[2],
+  G1 = G_en(1), G0.5 = G_en(0.5), G0 = G_en(0), max_sobre_min = rel)
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+**Respuesta.** La prueba de box-cox nos permite evidenciar que el perfil es casi plano, donde $\lambda$ es de −2 a 3 desde el borde inferior de la malla (`r f(compat[1], 2)`) hasta `r f(compat[2], 2)`, y se tienen a  $G(\lambda) < \chi^2_{1;0,95} = 3,84$, y en particular $G(1) =$ `r f(G_en(1))`, $G(0,5) =$ `r f(G_en(0.5))` y $G(0) =$ `r f(G_en(0))`, podemos ver que todos son compatibles con los datos; incluso el mínimo cae en el borde de la malla($\lambda$). 
+El perfil  de este caso no distingue porque el nivel varía muy poco en términos relativos: el máximo del entrenamiento es solo `r f(100 * (rel - 1), 1)` % mayor que el mínimo (cociente `r f(rel, 3)`), y en un rango tan estrecho cualquier potencia $Z^\lambda$ es casi una función lineal de $Z$. Además vemos que la amplitud del ciclo no crece con el nivel (A1), con toda la informacion recolectada vemos que **no transformamos** ($\lambda = 1$), lo que deja el modelo y el pronóstico en ppm sin retransformar.
 
 ## A3. ¿Cuántas diferencias?
 
 ```{r}
-# Pendiente: ACF de diferencia regular en 12, 24, 36; ACF de diferencia estacional en 1–6; justificar d, D y doble diferencia.
+#| label: A3
+#| fig-height: 6
+par(mfrow = c(2, 1))
+acf(diff(ztr), lag.max = 48, main = expression(ACF ~ de ~ nabla * Z[t]))
+acf(diff(ztr, 12), lag.max = 24, main = expression(ACF ~ de ~ nabla[12] * Z[t]))
+par(mfrow = c(1, 1))
+r1  <- acf(diff(ztr), lag.max = 36, plot = FALSE)$acf[-1]
+r12 <- acf(diff(ztr, 12), lag.max = 12, plot = FALSE)$acf[-1]
+list(acf_nabla_12_24_36 = round(r1[c(12, 24, 36)], 3),
+     acf_nabla12_1a6 = round(r12[1:6], 3))
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+**Respuesta.** Con los resultados obtenidos vemos que $\nabla Z_t$ tiene las autocorrelaciones en los rezagos 12, 24 y 36 son `r f(r1[12], 3)`, `r f(r1[24], 3)` y `r f(r1[36], 3)`, podemos evidenciar que son grandes y tienden a decaen muy despacio, que es la huella de una componente estacional no estacionaria, por lo que tomamos **D = 1**.
 
-## Bono opcional. Prueba HEGY
+Por otro lado  $\nabla_{12} Z_t$ obtiene las autocorrelaciones de los rezagos 1 a 6 son `r paste(f(r12[1:6], 3), collapse = "; ")`, donde vemos que todas son positivas y con un decaimiento lento y casi lineal, podemos evidencia la huella de una raíz unitaria regular ( donde la tendencia que sube unas `r f(crec_medio, 1)` ppm por año), así que tomamos también **d = 1**. Con una sola de las dos diferencias queda una no estacionariedad, de modo que $W_t = \nabla\nabla_{12} Z_t$ es la serie estacionaria de la que parte la identificación; con $d + D = 2$ el modelo no lleva constante.
 
-```{r}
-# Pendiente: t1 con seis partes; F estacionales con y sin tendencia; interpretación y relación con D=1. Eliminar esta sección si no se realiza.
-```
-
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
 
 ## A4. Identificar el modelo
 
 ```{r}
-# Pendiente: ACF/PACF regular y estacional, orden_A, tabla BIC, segundo candidato y decisión.
+#| label: A4
+#| fig-height: 6
+W <- diff(diff(ztr), 12)
+banda <- 2 / sqrt(length(W))
+par(mfrow = c(2, 1))
+acf(W, lag.max = 48, main = expression(ACF ~ de ~ nabla * nabla[12] * Z[t]))
+pacf(W, lag.max = 48, main = expression(PACF ~ de ~ nabla * nabla[12] * Z[t]))
+par(mfrow = c(1, 1))
+rW <- acf(W, 36, plot = FALSE)$acf[-1]; pW <- pacf(W, 36, plot = FALSE)$acf
+fuera <- data.frame(rezago = 1:36, acf = round(rW, 2), pacf = round(as.numeric(pW), 2))
+fuera[abs(fuera$acf) > banda | abs(fuera$pacf) > banda, ]
+banda
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+```{r}
+#| label: A4-bic
+tabla_bic <- NULL
+for (p in 0:2) for (q in 0:2) for (P in 0:1) for (Q in 0:1) {
+  ajuste <- try(arima(ztr, c(p, 1, q), list(order = c(P, 1, Q), period = 12), method = "ML"), silent = TRUE)
+  if (!inherits(ajuste, "try-error"))
+    tabla_bic <- rbind(tabla_bic, data.frame(modelo = sprintf("(%d,1,%d)(%d,1,%d)12", p, q, P, Q),
+                                             BIC = BIC(ajuste), AIC = AIC(ajuste)))
+}
+tabla_bic <- tabla_bic[order(tabla_bic$BIC), ]
+tabla_bic$dBIC <- tabla_bic$BIC - tabla_bic$BIC[1]
+head(tabla_bic, 6)
+
+orden_A <- list(order = c(0, 1, 1), seasonal = c(0, 1, 1))   # decisión del equipo
+```
+
+**Respuesta.** La banda que obtuvimos fue de ±`r f(banda, 3)` ($2/\sqrt{n_W}$), e e grafico podemos evidenciar que en la parte regular la ACF de $W_t$ tiene un solo pico, $r_1 =$ `r f(rW[1])`, y se corta después, mientras que el comporatmiento de la PACF decae ($`r f(pW[1])`$, $`r f(pW[2])`$, ...), lo que apunta a un MA(1) regular. 
+
+
+En la parte estacional que posee la ACF tiene $r_{12} =$ `r f(rW[12])` y $r_{24} =$ `r f(rW[24])`, es decir, se corta después del primer rezago estacional, mientras que la PACF en 12 y 24 (`r f(pW[12])` y `r f(pW[24])`) decae, lo que apunta a un MA(1) estacional; donde los picos en los rezagos 11, 13, 23 y 25 son los satélites alrededor de 12 y 24 que produce el producto $(1-\theta B)(1-\Theta B^{12})$, y el de 7 (`r f(rW[7])`) es aislado y no se repite.  
+Además observamos que se tiene el menor BIC (`r f(tabla_bic$BIC[1])`). El segundo es `r tabla_bic$modelo[2]` con `r f(tabla_bic$dBIC[2])` unidades más de BIC: donde agregamos un parámetro que la ACF no pide (solo $r_1$ sale de la banda en la parte regular).
 
 ## A5. Estimar, validar y buscar atípicos
 
@@ -89,6 +262,14 @@ stopifnot(length(co2_entrenamiento) == 153, length(co2_validacion) == 12,
 
 ```{r}
 # Pendiente: Método elegido, reestimación con datos disponibles, pronósticos octubre 2025–septiembre 2026, mayo 2026 e IC95%, primer mes >430 ppm (si existe), ancho del intervalo, supuesto y apuesta. Escribir CSV con formato oficial.
+```
+
+**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+
+## Bono opcional. Prueba HEGY
+
+```{r}
+# Pendiente: t1 con seis partes; F estacionales con y sin tendencia; interpretación y relación con D=1. Eliminar esta sección si no se realiza.
 ```
 
 **Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.

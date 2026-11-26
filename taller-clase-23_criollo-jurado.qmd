@@ -475,7 +475,7 @@ abline(h = 430, col = "red", lty = 3)
 # Declaración de uso de asistentes de inteligencia artificial
 
 Se utilizó ChatGPT para revisar los requisitos del enunciado, organizar la estructura del repositorio y preparar una plantilla inicial de Quarto, incluida la carga y partición de datos. Completar esta declaración con cualquier uso posterior.
-
+Tambien usamos Claude (Anthropic) para entender el enunciado del reto, verifico y ajusto el código del Caso A y demas revisamos cada cifra e interpretación que usuario proporciono.
 # Información de la sesión
 
 ```{r}

@@ -202,6 +202,39 @@ list(acf_nabla_12_24_36 = round(r1[c(12, 24, 36)], 3),
 
 Por otro lado  $\nabla_{12} Z_t$ obtiene las autocorrelaciones de los rezagos 1 a 6 son `r paste(f(r12[1:6], 3), collapse = "; ")`, donde vemos que todas son positivas y con un decaimiento lento y casi lineal, podemos evidencia la huella de una raíz unitaria regular ( donde la tendencia que sube unas `r f(crec_medio, 1)` ppm por año), así que tomamos también **d = 1**. Con una sola de las dos diferencias queda una no estacionariedad, de modo que $W_t = \nabla\nabla_{12} Z_t$ es la serie estacionaria de la que parte la identificación; con $d + D = 2$ el modelo no lleva constante.
 
+## Bono opcional. Prueba HEGY
+```{r}
+#| label: bono-hegy
+#| eval: !expr requireNamespace("uroot", quietly = TRUE)
+library(uroot)
+# Con constante, dummies estacionales y sin tendencia
+h_sin <- hegy.test(ztr, deterministic = c(1, 0, 1), lag.method = "BIC", maxlag = 12)
+# Con constante, tendencia y dummies estacionales
+h_con <- hegy.test(ztr, deterministic = c(1, 1, 1), lag.method = "BIC", maxlag = 12)
+h_sin
+h_con
+```
+
+```{r}
+#| label: bono-cifras
+#| include: false
+hs <- function(h, k) if (exists(h)) get(h)[[k]] else NA
+t1_sin <- hs("h_sin", "statistics")["t_1"]; p1_sin <- hs("h_sin", "pvalues")["t_1"]
+t1_con <- hs("h_con", "statistics")["t_1"]; p1_con <- hs("h_con", "pvalues")["t_1"]
+pF_max <- max(c(hs("h_sin", "pvalues")[c("t_2", "F_3:4", "F_5:6", "F_7:8", "F_9:10", "F_11:12")],
+                hs("h_con", "pvalues")[c("t_2", "F_3:4", "F_5:6", "F_7:8", "F_9:10", "F_11:12")]))
+F212 <- c(hs("h_sin", "statistics")["F_2:12"], hs("h_con", "statistics")["F_2:12"])
+```
+
+**Respuesta.** de la *Prueba de $t_1$ (frecuencia cero).* podemos concluir que:
+
+1. H~0~: $\pi_1 = 0$, hay una raíz unitaria en $B = 1$ (raíz regular); H~1~: $\pi_1 < 0$, no la hay. 
+2. $t_1 = \hat\pi_1/\text{ee}(\hat\pi_1)$ en la regresión HEGY, que bajo H~0~ no sigue una $t$ de Student sino una distribución de tipo Dickey y Fuller, cuyos valores p `hegy.test` obtiene por superficies de respuesta. 
+3. Se rechaza si el valor p es menor que 0,05 (cola izquierda). 
+4. $t_1 =$ `r f(t1_con, 3)` con valor p `r f(p1_con, 3)`; sin tendencia, $t_1 =$ `r f(t1_sin, 3)` con valor p `r f(p1_sin, 3)`. 
+6. El CO~2~ tiene una raíz unitaria regular: la tendencia es estocástica y hace falta la diferencia $\nabla$ ($d = 1$), como dijo A3.
+
+En cambio, $t_2$ es frecuencia semestral donde todos los F de los pares de frecuencias estacionales son, $F_{3:4}$ a $F_{11:12}$, se rechazan en las dos versiones (el mayor valor p es `r f(pF_max, 4)`), y el conjunto $F_{2:12}$ vale `r f(F212[1])` sin tendencia y `r f(F212[2])` con tendencia. Por lo tanto no hay raíces unitarias estacionales ya que el ciclo anual del CO~2~ es determinístico, además, se repite cada año con la misma forma y no acumula choques. Aun así, el modelo de SARIMA con D = 1 es una aproximación razonable porque, si $\Theta$ está cerca de 1, el factor $(1 - \Theta B^{12})$ casi cancela la diferencia $\nabla_{12}$, lo que equivale a un modelo con dummies estacionales fijas; además, quita el patrón sin tener que estimar doce efectos, y en A5 y A7 $\hat\Theta$ resulta cercano a 1.
 
 ## A4. Identificar el modelo
 
@@ -245,34 +278,149 @@ Además observamos que se tiene el menor BIC (`r f(tabla_bic$BIC[1])`). El segun
 ## A5. Estimar, validar y buscar atípicos
 
 ```{r}
-# Pendiente: Ecuación con convención del curso y t; Ljung-Box K=24; normalidad, AO/IO/LS/TC, sobreajuste e IC95% de Theta.
+#| label: A5
+fitA <- arima(ztr, order = orden_A$order,
+              seasonal = list(order = orden_A$seasonal, period = 12), method = "ML")
+fitA
+seA <- sqrt(diag(fitA$var.coef)); tA <- coef(fitA) / seA
+theta <- -coef(fitA)["ma1"]; Theta <- -coef(fitA)["sma1"]
+round(rbind(estimador_R = coef(fitA), ee = seA, t = tA), 3)
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+```{r}
+#| label: A5-valid
+#| fig-height: 6
+resA <- residuals(fitA)
+mA <- 2; K <- 24
+lb <- Box.test(resA, lag = K, type = "Ljung-Box", fitdf = mA)
+lb; qchisq(0.95, K - mA)
+sw <- shapiro.test(resA[-(1:13)]); sw
+par(mfrow = c(2, 2))
+plot(resA, main = "Residuos", ylab = "ppm"); abline(h = 0, lty = 2)
+acf(resA[-(1:13)], lag.max = 36, main = "ACF de los residuos")
+qqnorm(resA[-(1:13)]); qqline(resA[-(1:13)])
+hist(resA[-(1:13)], main = "Histograma", xlab = "ppm")
+par(mfrow = c(1, 1))
+```
+
+```{r}
+#| label: A5-atipicos
+atA <- atipicos(fitA)
+maxA <- apply(abs(atA[, -1]), 2, max)
+round(maxA, 2)
+atA[apply(abs(atA[, -1]), 1, max) > 3.5, ]   # filas con |lambda| > 3,5
+```
+
+```{r}
+#| label: A5-sobreajuste
+sobre <- list("(1,1,1)(0,1,1)" = list(c(1,1,1), c(0,1,1)), "(0,1,2)(0,1,1)" = list(c(0,1,2), c(0,1,1)),
+              "(0,1,1)(1,1,1)" = list(c(0,1,1), c(1,1,1)), "(0,1,1)(0,1,2)" = list(c(0,1,1), c(0,1,2)))
+tab_sobre <- t(sapply(sobre, function(o) {
+  g <- arima(ztr, o[[1]], list(order = o[[2]], period = 12), method = "ML")
+  nuevo <- setdiff(names(coef(g)), names(coef(fitA)))
+  c(estimador = unname(coef(g)[nuevo]), t = unname(coef(g)[nuevo] / sqrt(diag(g$var.coef))[nuevo]),
+    BIC = BIC(g))
+}))
+round(tab_sobre, 3)
+
+ic_Theta <- Theta + c(-1, 1) * 1.96 * seA["sma1"]
+round(ic_Theta, 3)
+
+# Mismo intervalo con la serie completa (165 meses)
+fitA_full <- arima(z, order = orden_A$order,
+                   seasonal = list(order = orden_A$seasonal, period = 12), method = "ML")
+Theta_full <- -coef(fitA_full)["sma1"]
+ic_Theta_full <- Theta_full + c(-1, 1) * 1.96 * sqrt(fitA_full$var.coef["sma1", "sma1"])
+round(c(Theta_full = unname(Theta_full), ic_Theta_full), 3)
+```
+
+**Respuesta.** El modelo estimado, con la convención fue ($\theta_1 = -$ma1, $\Theta_1 = -$sma1), es
+$$\nabla\nabla_{12} Z_t = (1 - `r f(theta, 3)`\,B)(1 - `r f(Theta, 3)`\,B^{12})\,a_t,\qquad \hat\sigma_a^2 = `r f(fitA$sigma2, 4)`,$$
+con $t(\hat\theta_1) =$ `r f(-tA["ma1"])` y $t(\hat\Theta_1) =$ `r f(-tA["sma1"])`, observamos que los dos son muy significativos.
+
+De la  *Prueba de Ljung y Box* obtuvimos lo siguiente:
+
+1. H~0~: $\rho_1 = \dots = \rho_{24} = 0$ en los errores, H~1~: algún $\rho_k \neq 0$. 
+2. $Q^* = n(n+2)\sum_{k=1}^{24} r_k^2/(n-k) \sim \chi^2_{K-m} = \chi^2_{22}$, con $m = 2$ parámetros ARMA. 
+3. Se rechaza si $Q^* > \chi^2_{22;0,95} =$ `r f(qchisq(0.95, 22))`. 
+4. $Q^* =$ `r f(lb$statistic)` (valor p `r f(lb$p.value, 3)`). 
+5. No se rechaza H~0~. 
+6. Los residuos no muestran autocorrelación hasta dos años: el modelo recoge la dinámica regular y estacional del CO~2~.
+
+La prueba de Shapiro y Wilk da W = `r f(sw$statistic, 3)` nos arrojo un valor p `r f(sw$p.value, 3)` y el QQ es recto, así que la normalidad que usan los intervalos de pronóstico es razonable. En la búsqueda de valores atípicos el mayor $|\lambda_j(T)|$ es de `r f(max(maxA))`, por debajo de 3,5, de modo que no se declara ningún valor atípico, como dice el enunciado del reto (solo estabamos rectificando). 
+
+Al realizar el sobreajuste vimos que ninguno de los cuatro parámetros añadidos es significativo (el mayor $|t|$ es `r f(max(abs(tab_sobre[, "t"])))`) ya que todos suben el BIC. El intervalo del 95 % para $\Theta$ es [`r f(ic_Theta[1], 3)`; `r f(ic_Theta[2], 3)`]: este no contiene el 1, pero su límite superior está muy cerca, lo que nos dice que hay un patrón estacional que cambia muy poco de un año a otro, tambien podemos decir que es casi determinístico; al reestimar con los 165 meses (A7) $\hat\Theta =$ `r f(Theta_full, 3)` y el intervalo [`r f(ic_Theta_full[1], 3)`; `r f(ic_Theta_full[2], 3)`] ya contiene el 1.
 
 ## A6. ¿Le gana el SARIMA a las referencias?
 
 ```{r}
-# Pendiente: Validación de 12 meses; RMSE, MAPE, MASE para SARIMA, ingenuo estacional y Holt-Winters aditivo; interpretación y cobertura del IC95%.
+#| label: A6
+pA_val <- predict(fitA, n.ahead = 12)
+ingenuo <- ts(tail(ztr, 12), start = c(2024, 10), frequency = 12)
+hwA <- HoltWinters(ztr, seasonal = "additive")
+hwA_val <- predict(hwA, n.ahead = 12)
+escala <- mean(abs(diff(ztr, 12)))    # MAE del ingenuo estacional en el entrenamiento
+compA <- rbind(SARIMA = medidas(zva, pA_val$pred, escala),
+               "Ingenuo estacional" = medidas(zva, ingenuo, escala),
+               "Holt-Winters aditivo" = medidas(zva, hwA_val, escala))
+round(compA, 3); escala
+li <- pA_val$pred - 1.96 * pA_val$se; ls <- pA_val$pred + 1.96 * pA_val$se
+cobertura <- sum(zva >= li & zva <= ls); cobertura
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+```{r}
+#| label: A6-fig
+#| fig-height: 4
+ts.plot(window(z, start = c(2022, 1)), pA_val$pred, li, ls, hwA_val, ingenuo,
+        col = c("black", "blue", "blue", "blue", "red", "purple"), lty = c(1, 1, 2, 2, 1, 1),
+        ylab = "CO2 (ppm)", main = "Validación: octubre de 2024 a septiembre de 2025")
+legend("topleft", c("Observado", "SARIMA e IC 95 %", "Holt-Winters", "Ingenuo estacional"),
+       col = c("black", "blue", "red", "purple"), lty = 1, bty = "n", cex = 0.8)
+```
+
+**Respuesta.** Observamos que en los doce meses de validación el modelo SARIMA tiene RMSE = `r f(compA[1, 1], 3)` ppm, MAPE = `r f(compA[1, 2], 3)` % y MASE = `r f(compA[1, 3], 3)`; Holt-Winters queda cerca con `r f(compA[3, 1], 3)`, `r f(compA[3, 2], 3)` % y `r f(compA[3, 3], 3)`, y el ingenuo estacional queda muy atrás con `r f(compA[2, 1], 3)`, `r f(compA[2, 2], 3)` % y `r f(compA[2, 3], 3)`. 
+
+El MASE divide el error absoluto medio del método entre el del ingenuo estacional dentro del entrenamiento, `r f(escala, 3)` ppm, así que un MASE de `r f(compA[1, 3], 3)` quiere decir que el SARIMA tiene un error cerca del `r f(100 * compA[1, 3], 0)` % de lo que se equivocaba el ingenuo, y un MASE mayor que 1 indica que el método es peor que esa referencia. Vemos que el ingenuo estacional pierde tanto porque repite el valor de hace doce meses y no ve la tendencia ya que llega siempre unas `r f(crec_medio, 1)` a `r f(crec_ultimo, 1)` ppm por debajo, que es justo el crecimiento anual. Los `r cobertura` de los 12 valores observados caen dentro del intervalo del 95 % del SARIMA.
 
 ## A7. El pronóstico del tablero
 
 ```{r}
-# Pendiente: Método elegido, reestimación con datos disponibles, pronósticos octubre 2025–septiembre 2026, mayo 2026 e IC95%, primer mes >430 ppm (si existe), ancho del intervalo, supuesto y apuesta. Escribir CSV con formato oficial.
+#| label: A7
+fitA_full   # estimado en A5 con los 165 meses
+pf <- predict(fitA_full, n.ahead = 12)
+tabA <- data.frame(fecha = format(seq(as.Date("2025-10-01"), by = "month", length.out = 12), "%Y-%m"),
+                   pronostico = as.numeric(pf$pred),
+                   li95 = as.numeric(pf$pred - 1.96 * pf$se),
+                   ls95 = as.numeric(pf$pred + 1.96 * pf$se),
+                   ancho = as.numeric(2 * 1.96 * pf$se))
+knitr::kable(tabA, digits = 3, caption = "Pronóstico del CO2 (ppm), octubre de 2025 a septiembre de 2026")
+mayo <- tabA[tabA$fecha == "2026-05", ]
+primero430 <- tabA$fecha[which(tabA$pronostico > 430)[1]]
+# Archivo del tablero
+tablero <- data.frame(pareja = pareja, fecha = tabA$fecha,
+                      pronostico = sprintf("%.3f", tabA$pronostico))
+write.csv(tablero, paste0("reto-co2_", pareja, ".csv"), row.names = FALSE, quote = FALSE)
+tablero
 ```
-
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
-
-## Bono opcional. Prueba HEGY
 
 ```{r}
-# Pendiente: t1 con seis partes; F estacionales con y sin tendencia; interpretación y relación con D=1. Eliminar esta sección si no se realiza.
+#| label: A7-fig
+#| fig-height: 4
+ts.plot(window(z, start = c(2021, 1)), pf$pred, pf$pred - 1.96 * pf$se, pf$pred + 1.96 * pf$se,
+        col = c("black", "blue", "blue", "blue"), lty = c(1, 1, 2, 2),
+        ylab = "CO2 (ppm)", main = "Pronóstico del tablero con IC del 95 %")
+abline(h = 430, col = "red", lty = 3)
 ```
 
-**Respuesta:** Pendiente de resultados. Escribir de dos a seis oraciones sustentadas en las cifras.
+**Respuesta.** Para realizar el tablero usamos el SARIMA(0,1,1)(0,1,1)~12~ reestimado con los 165 meses, porque en A5 las pruebas de validación nos mostro que las pasó todas sin valores atípicos ni parámetros sobrantes, y en A6 obtuvimos el menor RMSE, MAPE y MASE, con `r cobertura` de 12 valores dentro de su intervalo; lo reestimamos con los datos completos aprovecha el último año, que creció más rápido. 
+
+- El pronóstico de mayo de 2026 nos arrojo que tenemos el máximo estacional, es `r f(mayo$pronostico, 3)` ppm con intervalo del 95 % [`r f(mayo$li95, 3)`; `r f(mayo$ls95, 3)`], y el primer mes en que el pronóstico supera 430 ppm es `r primero430`. 
+
+- El intervalo de septiembre de 2026 (ancho `r f(tabA$ancho[12], 3)` ppm) es más ancho que el de octubre de 2025 (`r f(tabA$ancho[1], 3)` ppm) porque la varianza del error de pronóstico es de $\sigma_a^2\sum_{j=0}^{h-1}\psi_j^2$, este crece con el horizonte $h$: a doce meses se acumulan los choques de los once meses intermedios, que el modelo integrado no deja que se disipen. 
+
+- Al realizar el supuesto que podría fallar es que el crecimiento anual se mantenga como en la muestra: ya que se puede reducir la absorción de las plantas y sube el crecimiento, como en 2016 y 2024 o un cambio en las emisiones rompería la homogeneidad de $\{a_t\}$ y dejaría el pronóstico por debajo o por encima del observado. 
+
+**Apuesta del equipo:**. En la historia de la serie pudimos observar que el primer promedio mensual esta por encima de 430 ppm fue mayo de 2025 (`r f(window(z, start = c(2025, 5), end = c(2025, 5)), 2)` ppm), pero después vimos que la serie bajó con el ciclo; en el año del tablero el modelo dice que el primer cruce es `r primero430`, con febrero de 2026 en `r f(tabA$pronostico[5], 2)` ppm, muy cerca del umbral. Si el crecimiento de `r f(crec_ultimo, 2)` ppm del último año se repite, febrero de 2026 quedaría en unas `r f(window(z, start = c(2025, 2), end = c(2025, 2)) + crec_ultimo, 2)` ppm, por encima de 430, así que una apuesta razonable es febrero de 2026 y la del modelo es marzo de 2026.
 
 # Caso B: viajeros del Reino Unido a Australia
 
